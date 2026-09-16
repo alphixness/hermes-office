@@ -1,14 +1,13 @@
-// Hermes 办公室 · 桌面端原生面板
-// 位置: $HERMES_HOME/plugins/hermes-office/desktop/plugin.js   （统一包：agent 侧 + 桌面侧同一个文件夹）
+// Hermes 办公室 · 桌面端原生面板（办公室场景版）
+// 位置: $HERMES_HOME/plugins/hermes-office/desktop/plugin.js   （统一包：agent 侧 + 桌面侧同一文件夹）
 //
-// 与原「独立窗口版」的区别：**不依赖任何本地端口**。
-// 数据走 ctx.rest → gateway 自己的路由 /api/plugins/hermes-office/*（由本插件 dashboard/plugin_api.py 提供），
-// 所以在桌面端里打开就是原生面板，不需要先把 8123 跑起来。
+// 与「数据卡片版」的区别：这一版把**办公室场景**搬进了原生面板 —— 墙面/地板、房间隔断、
+// 木工位牌、工位气泡、状态灯 —— 全部用 jsx() 原生渲染，**不依赖任何本地端口、没有 iframe**。
+// 数据仍走 ctx.rest → /api/plugins/hermes-office/*（gateway 自己的路由）。
 //
-// SDK 硬规则（disk/统一包都不编译）：
-//   · 只能 import '@hermes/plugin-sdk' / 'react' / 'react/jsx-runtime'
-//   · 不能写 JSX 语法，用 jsx() / jsxs()
-//   · 用 import * as SDK，避免某个导出改名导致整个模块链接失败
+// SDK 硬规则：只能 import '@hermes/plugin-sdk' / 'react' / 'react/jsx-runtime'；
+//            不能写 JSX 语法（用 jsx()/jsxs()）；用 import * as SDK 抗导出改名。
+// 配色：文字/边框走主题变量 var(--ui-*)，木色/状态色是设计常量。
 import * as SDK from '@hermes/plugin-sdk'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
@@ -27,10 +26,8 @@ const AREA = {
 const PAGE_PATH = '/office'
 const POLL_MS = 5000
 
-let CTX = null
-
-/* ------------------------------------------------------------------ 数据层 */
-
+// —— 设计常量（木色工位牌 + 状态色；文字与边框交给主题变量，切主题不会花）——
+const WOOD = { top: '#c08a5e', mid: '#a3714a', deep: '#8c5f3d', ink: '#2b1c10', sub: '#4a3524' }
 const STATE_CN = {
   working: '在岗干活', queued: '排队待命', blocked: '卡住了',
   idle: '空闲', done: '收工', vacant: '招人中', human: '本人',
@@ -40,8 +37,13 @@ const STATE_COLOR = {
   idle: '#8a819e', vacant: '#5b5470', human: '#ffd479',
 }
 
+let CTX = null
+
 function nf(n) { return (n || 0).toLocaleString('en-US') }
 function shortT(t) { return t ? String(t).replace('T', ' ').slice(5, 16) : '—' }
+function shortTitle(s, n = 22) { return s && s.length > n ? s.slice(0, n) + '…' : (s || '') }
+
+/* ------------------------------------------------------------------ 数据层 */
 
 function useOfficeData() {
   const [data, setData] = useState(null)
@@ -64,7 +66,6 @@ function useOfficeData() {
   useEffect(() => {
     alive.current = true
     pull()
-    // 头像只取一次（base64 内嵌），别塞进轮询
     if (CTX && CTX.rest) CTX.rest('/avatars').then(a => { if (alive.current) setAvatars(a || {}) }).catch(() => {})
     const t = setInterval(pull, POLL_MS)
     return () => { alive.current = false; clearInterval(t) }
@@ -73,183 +74,220 @@ function useOfficeData() {
   return { data, avatars, error, updatedAt, refresh: pull }
 }
 
-/* ------------------------------------------------------------------ 小组件 */
+/* ------------------------------------------------------------------ 场景零件 */
 
-function Avatar({ agent, avatars, size = 34 }) {
+/** 头像：状态环 + 卡住时歪 6°（和独立窗口版保持一致） */
+function Face({ agent, avatars, size = 44 }) {
   const src = agent && avatars[agent.avatar || agent.name]
-  const st = agent ? (agent.exists ? agent.state : 'vacant') : 'vacant'
+  const st = !agent ? 'vacant' : (agent.human ? 'human' : (agent.exists ? (agent.state || 'idle') : 'vacant'))
   const ring = STATE_COLOR[st] || '#8a819e'
-  const common = {
-    width: size, height: size, borderRadius: '50%', flex: `0 0 ${size}px`,
-    background: src ? `url(${src}) center/cover no-repeat` : 'var(--ui-bg-secondary, #2a2334)',
-    border: `2px solid ${ring}`,
-    display: 'flex', alignItems: 'center', justifyContent: 'center',
-    fontSize: size * 0.42, color: 'var(--ui-text-tertiary, #9d93ad)',
-    transform: st === 'blocked' ? 'rotate(-6deg)' : 'none',
-  }
-  return jsx('div', { style: common, children: src ? null : (agent && agent.display_name ? agent.display_name.slice(0, 1) : '?') })
-}
-
-function StateDot({ state }) {
-  return jsx('span', {
-    style: { display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: STATE_COLOR[state] || '#8a819e', marginRight: 4, verticalAlign: 1 },
+  return jsx('div', {
+    style: {
+      width: size, height: size, borderRadius: '50%', flex: `0 0 ${size}px`,
+      background: src ? `url(${src}) center/cover no-repeat` : 'var(--ui-bg-secondary, #2a2334)',
+      border: `3px solid ${ring}`,
+      boxShadow: st === 'working' ? `0 0 0 4px ${ring}22` : 'none',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      fontSize: Math.round(size * 0.4), color: 'var(--ui-text-tertiary, #9d93ad)',
+      transform: st === 'blocked' ? 'rotate(-6deg)' : 'none',
+      filter: st === 'vacant' ? 'grayscale(1) brightness(.7)' : 'none',
+    },
+    children: src ? null : ((agent && agent.display_name) ? agent.display_name.slice(0, 1) : '?'),
   })
 }
 
-function Desk({ agent, avatars, onClick, active }) {
-  const st = agent.exists ? (agent.state || 'idle') : 'vacant'
-  const cur = agent.current && agent.current.title
-  const line = agent.human ? '👑 点我派活给经理 →'
-    : cur ? '🔨 ' + cur
-      : agent.last_activity ? '⚡ ' + agent.last_activity
-        : '— 待命中 —'
-  return jsxs('button', {
-    type: 'button',
-    onClick,
-    className: 'flex flex-col gap-1.5 rounded-lg border p-2 text-left',
+/** 工位气泡：正在干活 / 最近活动 / 待命 */
+function bubbleText(agent) {
+  if (!agent) return ''
+  if (agent.human) return '👑 点我派活给经理 →'
+  if (!agent.exists) return '— 招人中 —'
+  if (agent.current && agent.current.title) return '🔨 ' + agent.current.title
+  if (agent.state === 'blocked') return '⚠️ 卡住了，需要处理'
+  if (agent.last_activity) return '⚡ ' + agent.last_activity
+  return '— 待命中 —'
+}
+
+/** 木工位牌：名字 + 岗位·状态 + 完成/Token */
+function Nameplate({ agent }) {
+  const st = !agent ? 'vacant' : (agent.human ? 'human' : (agent.exists ? (agent.state || 'idle') : 'vacant'))
+  const done = (agent && agent.counts && agent.counts.done) || 0
+  return jsxs('div', {
     style: {
-      borderColor: active ? 'var(--ui-accent, #ffd479)' : 'var(--ui-border, #3a3147)',
-      background: 'var(--ui-bg-secondary, #251f30)',
-      cursor: 'pointer',
+      background: `linear-gradient(180deg, ${WOOD.top}, ${WOOD.mid})`,
+      border: `1px solid ${WOOD.deep}`,
+      borderRadius: 7, padding: '4px 8px',
+      boxShadow: 'inset 0 1px 0 rgba(255,255,255,.22), 0 2px 5px rgba(0,0,0,.35)',
+      color: WOOD.ink,
     },
     children: [
       jsxs('div', {
-        className: 'flex items-center gap-2',
+        style: { display: 'flex', alignItems: 'center', gap: 6 },
         children: [
-          jsx(Avatar, { agent, avatars }),
-          jsxs('div', {
-            className: 'flex min-w-0 flex-col',
-            children: [
-              jsx('div', { className: 'truncate text-xs font-medium', children: agent.display_name }),
-              jsxs('div', {
-                className: 'flex items-center text-[0.6875rem] text-(--ui-text-tertiary)',
-                children: [jsx(StateDot, { state: st }), jsx('span', { className: 'truncate', children: agent.role + ' · ' + (STATE_CN[st] || st) })],
-              }),
-            ],
+          jsx('span', { style: { fontWeight: 700, fontSize: 13, color: '#fff6e8', textShadow: '0 1px 1px rgba(0,0,0,.35)' }, children: agent ? agent.display_name : '招人中' }),
+          jsx('span', { style: { width: 6, height: 6, borderRadius: '50%', background: STATE_COLOR[st] || '#8a819e' } }),
+          jsx('span', {
+            style: { fontSize: 10.5, color: WOOD.sub, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
+            children: agent ? `${agent.role} · ${STATE_CN[st] || st}` : '—— 空岗 ——',
           }),
         ],
       }),
-      jsx('div', {
-        className: 'truncate text-[0.6875rem] text-(--ui-text-tertiary)',
-        title: line,
-        children: line,
-      }),
       jsxs('div', {
-        className: 'flex items-center justify-between text-[0.625rem] text-(--ui-text-tertiary)',
+        style: { display: 'flex', justifyContent: 'space-between', fontSize: 10, color: WOOD.sub, marginTop: 1 },
         children: [
-          jsx('span', { children: '完成 ' + ((agent.counts && agent.counts.done) || 0) }),
-          jsx('span', { children: nf(agent.tokens && agent.tokens.total) + ' tok' }),
+          jsx('span', { children: agent && agent.exists ? `完成 ${done}` : '' }),
+          jsx('span', { children: agent && agent.exists ? `${nf(agent.tokens && agent.tokens.total)} tok` : '' }),
         ],
       }),
     ],
   })
 }
 
-function Detail({ agent, avatars }) {
+/** 一个工位：气泡 → 头像 → 木牌（可点，选中展开详情） */
+function Desk({ agent, avatars, onClick, active }) {
+  const st = !agent ? 'vacant' : (agent.human ? 'human' : (agent.exists ? (agent.state || 'idle') : 'vacant'))
+  const bub = bubbleText(agent)
+  const hot = st === 'working'
+  return jsxs('button', {
+    type: 'button',
+    onClick,
+    title: bub,
+    style: {
+      display: 'flex', flexDirection: 'column', gap: 5, alignItems: 'stretch',
+      padding: '8px 8px 7px', borderRadius: 12,
+      background: 'linear-gradient(180deg, rgba(255,255,255,.045), rgba(0,0,0,.16))',
+      border: `1px solid ${active ? 'var(--ui-accent, #ffd479)' : (hot ? 'rgba(79,209,139,.5)' : 'var(--ui-border, #3a3147)')}`,
+      boxShadow: hot ? '0 0 22px -10px rgba(79,209,139,.7)' : 'none',
+      cursor: 'pointer', textAlign: 'left',
+      opacity: st === 'vacant' ? 0.72 : 1,
+    },
+    children: [
+      jsx('div', {
+        style: {
+          fontSize: 10.5, lineHeight: 1.35, minHeight: 26,
+          color: hot ? '#cdf7e3' : 'var(--ui-text-secondary, #cbc2de)',
+          background: 'var(--ui-bg, #1d1727)',
+          border: `1px solid ${hot ? 'rgba(79,209,139,.35)' : 'var(--ui-border, #3a3147)'}`,
+          borderRadius: 7, padding: '3px 6px',
+          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+        },
+        children: bub,
+      }),
+      jsx('div', { style: { display: 'flex', justifyContent: 'center' }, children: jsx(Face, { agent, avatars }) }),
+      jsx(Nameplate, { agent }),
+    ],
+  })
+}
+
+/** 一间房间：标题 + 隔断感的容器 */
+function Room({ title, note, children, tall }) {
+  return jsxs('div', {
+    style: {
+      border: '1px solid var(--ui-border, #3a3147)',
+      borderRadius: 14,
+      background: 'linear-gradient(180deg, rgba(255,255,255,.035), rgba(0,0,0,.14))',
+      padding: 10,
+      display: 'flex', flexDirection: 'column', gap: 8,
+    },
+    children: [
+      jsxs('div', {
+        style: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, letterSpacing: 1.4, color: 'var(--ui-text-tertiary, #9d93ad)' },
+        children: [
+          jsx('span', {
+            style: { background: 'rgba(255,212,121,.10)', border: '1px solid rgba(255,212,121,.32)', borderRadius: 6, padding: '2px 9px', color: 'var(--ui-accent, #ffd479)' },
+            children: title,
+          }),
+          note ? jsx('span', { style: { letterSpacing: 0 }, children: note }) : null,
+        ],
+      }),
+      jsx('div', {
+        style: {
+          display: 'grid', gap: 8,
+          gridTemplateColumns: tall ? 'repeat(auto-fit, minmax(230px, 1fr))' : 'repeat(auto-fill, minmax(168px, 1fr))',
+        },
+        children,
+      }),
+    ],
+  })
+}
+
+/* ------------------------------------------------------------------ 详情 / 聊天 */
+
+function Detail({ agent, avatars, onClose }) {
   if (!agent) return null
   const tasks = agent.tasks || []
   const recs = agent.recent || []
+  const row = (k, v) => jsxs('div', { style: { display: 'flex', gap: 8, alignItems: 'baseline' } , children: [
+    jsx('span', { style: { color: 'var(--ui-text-tertiary, #9d93ad)', whiteSpace: 'nowrap' }, children: k }),
+    jsx('span', { style: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, children: v }),
+  ] })
   return jsxs('div', {
-    className: 'flex flex-col gap-2 rounded-lg border p-2 text-xs',
-    style: { borderColor: 'var(--ui-border, #3a3147)', background: 'var(--ui-bg-secondary, #251f30)' },
+    style: { border: '1px solid var(--ui-border, #3a3147)', borderRadius: 12, padding: 10, display: 'flex', flexDirection: 'column', gap: 6 },
     children: [
-      jsxs('div', {
-        className: 'flex items-center gap-2',
-        children: [
-          jsx(Avatar, { agent, avatars, size: 28 }),
-          jsx('span', { className: 'font-medium', children: agent.display_name }),
-          jsx('span', { className: 'text-(--ui-text-tertiary)', children: agent.role }),
-          jsx('span', { className: 'grow' }),
-          jsx('span', {
-            className: 'text-(--ui-text-tertiary)',
-            children: 'Token ' + nf(agent.tokens.total) + ' · $' + (agent.tokens.cost_usd || 0).toFixed(4),
-          }),
-        ],
-      }),
-      tasks.length
-        ? jsxs('div', { className: 'flex flex-col gap-1', children: [
-            jsx('div', { className: 'text-(--ui-text-tertiary)', children: '任务' }),
-            ...tasks.slice(0, 6).map(t => jsxs('div', {
-              key: t.id,
-              className: 'flex items-center gap-2',
-              children: [
-                jsx('span', { className: 'text-(--ui-text-tertiary)', children: '[' + t.status + ']' }),
-                jsx('span', { className: 'truncate', children: t.title }),
-                jsx('span', { className: 'grow' }),
-                jsx('span', { className: 'text-(--ui-text-tertiary)', children: shortT(t.updated_at) }),
-              ],
-            })),
-          ] })
-        : null,
-      recs.length
-        ? jsxs('div', { className: 'flex flex-col gap-1', children: [
-            jsx('div', { className: 'text-(--ui-text-tertiary)', children: '最近工作记录（来自它自己的 state.db）' }),
-            ...recs.slice(0, 4).map((r, i) => jsxs('div', {
-              key: i,
-              className: 'flex items-center gap-2',
-              children: [
-                jsx('span', { className: 'text-(--ui-text-tertiary)', children: shortT(r.at) }),
-                jsx('span', { className: 'truncate', children: r.title }),
-              ],
-            })),
-          ] })
-        : null,
+      jsxs('div', { style: { display: 'flex', alignItems: 'center', gap: 8 }, children: [
+        jsx(Face, { agent, avatars, size: 30 }),
+        jsx('b', { children: agent.display_name }),
+        jsx('span', { style: { color: 'var(--ui-text-tertiary, #9d93ad)' }, children: agent.role }),
+        jsx('span', { style: { flex: 1 } }),
+        jsxs('span', { style: { color: 'var(--ui-text-tertiary, #9d93ad)' }, children: [
+          'Token ', nf(agent.tokens && agent.tokens.total), ' · $', ((agent.tokens && agent.tokens.cost_usd) || 0).toFixed(4),
+          ' · 会话 ', nf(agent.tokens && agent.tokens.sessions),
+        ] }),
+        jsx('button', {
+          type: 'button', onClick: onClose,
+          style: { border: '1px solid var(--ui-border, #3a3147)', borderRadius: 6, padding: '1px 7px', background: 'transparent', color: 'inherit', cursor: 'pointer' },
+          children: '收起',
+        }),
+      ] }),
+      agent.current ? row('正在干', agent.current.title) : null,
+      ...tasks.slice(0, 6).map(t => row('[' + t.status + ']', t.title + (t.created_by ? '（由 ' + t.created_by + ' 派）' : ''))),
+      ...recs.slice(0, 4).map(r => row(shortT(r.at), r.title)),
+      jsx('div', { style: { fontSize: 10.5, color: 'var(--ui-text-tertiary, #9d93ad)' }, children: '任务来自 kanban.db；工作记录来自它自己的 state.db（只读）' }),
     ],
   })
 }
 
 function Feed({ feed, avatars, agents }) {
   if (!feed || !feed.length) {
-    return jsx('div', { className: 'p-3 text-xs text-(--ui-text-tertiary)', children: '还没有互动记录。派个任务给员工，这里就会出现他们之间的交流。' })
+    return jsx('div', { style: { padding: 12, color: 'var(--ui-text-tertiary, #9d93ad)' }, children: '还没有互动记录。派个任务给员工，这里就会出现他们之间的交流。' })
   }
   const byName = {}
   ;(agents || []).forEach(a => { byName[a.name] = a })
-  return jsxs('div', {
-    className: 'flex flex-col gap-1.5 p-2 text-xs',
-    children: feed.slice().reverse().map((m, i) => {
+  return jsxs('div', { style: { display: 'flex', flexDirection: 'column', gap: 6 }, children:
+    feed.slice().reverse().map((m, i) => {
       const a = m.author ? byName[m.author] : null
       return jsxs('div', {
-        className: 'flex items-start gap-2 rounded border p-1.5',
-        style: { borderColor: 'var(--ui-border, #3a3147)' },
+        style: { display: 'flex', gap: 8, alignItems: 'flex-start', border: '1px solid var(--ui-border, #3a3147)', borderRadius: 10, padding: 8 },
         children: [
-          jsx(Avatar, { agent: a || { name: m.author || '?', display_name: m.author || '系统', exists: false, state: 'idle' }, avatars, size: 22 }),
-          jsxs('div', {
-            className: 'min-w-0 flex-1',
-            children: [
-              jsxs('div', {
-                className: 'flex items-center gap-2 text-[0.6875rem] text-(--ui-text-tertiary)',
-                children: [
-                  jsx('span', { className: 'font-medium', children: a ? a.display_name : (m.author || '系统') }),
-                  jsx('span', { children: m.kind || '' }),
-                  jsx('span', { className: 'grow' }),
-                  jsx('span', { children: shortT(m.at) }),
-                ],
-              }),
-              m.text ? jsx('div', { style: { whiteSpace: 'pre-wrap', wordBreak: 'break-word' }, children: m.text }) : null,
-              m.task ? jsx('div', { className: 'text-(--ui-text-tertiary)', children: '📋 ' + m.task }) : null,
-            ],
-          }),
+          jsx(Face, { agent: a || { name: m.author || '?', display_name: (m.author || '系').slice(0, 1), exists: false, state: 'idle' }, avatars, size: 26 }),
+          jsxs('div', { style: { minWidth: 0, flex: 1 }, children: [
+            jsxs('div', { style: { display: 'flex', gap: 8, fontSize: 11, color: 'var(--ui-text-tertiary, #9d93ad)' }, children: [
+              jsx('b', { style: { color: 'var(--ui-text, inherit)' }, children: a ? a.display_name : (m.author || '系统') }),
+              jsx('span', { children: m.kind || '' }),
+              jsx('span', { style: { flex: 1 } }),
+              jsx('span', { children: shortT(m.at) }),
+            ] }),
+            m.text ? jsx('div', { style: { whiteSpace: 'pre-wrap', wordBreak: 'break-word' }, children: m.text }) : null,
+            m.task ? jsx('div', { style: { color: 'var(--ui-text-tertiary, #9d93ad)', fontSize: 11 }, children: '📋 ' + m.task }) : null,
+          ] }),
         ],
       }, i)
-    }),
-  })
+    }) })
 }
 
 function Stat({ label, value, sub }) {
   return jsxs('div', {
-    className: 'flex flex-col rounded border px-2 py-1',
-    style: { borderColor: 'var(--ui-border, #3a3147)' },
+    style: { border: '1px solid var(--ui-border, #3a3147)', borderRadius: 10, padding: '6px 10px', display: 'flex', flexDirection: 'column' },
     children: [
-      jsx('div', { className: 'text-[0.625rem] text-(--ui-text-tertiary)', children: label }),
-      jsx('div', { className: 'text-sm font-semibold', children: value }),
-      sub ? jsx('div', { className: 'text-[0.625rem] text-(--ui-text-tertiary)', children: sub }) : null,
+      jsx('div', { style: { fontSize: 10.5, color: 'var(--ui-text-tertiary, #9d93ad)' }, children: label }),
+      jsx('div', { style: { fontSize: 17, fontWeight: 700 }, children: value }),
+      sub ? jsx('div', { style: { fontSize: 10.5, color: 'var(--ui-text-tertiary, #9d93ad)' }, children: sub }) : null,
     ],
   })
 }
 
 /* ------------------------------------------------------------------ 主面板 */
 
-function OfficePanel({ full }) {
+function OfficePanel() {
   const { data, avatars, error, updatedAt, refresh } = useOfficeData()
   const [tab, setTab] = useState('desks')
   const [selected, setSelected] = useState(null)
@@ -265,22 +303,14 @@ function OfficePanel({ full }) {
 
   if (error && !data) {
     return jsxs('div', {
-      className: 'flex h-full flex-col items-center justify-center gap-2 p-6 text-center text-xs',
+      style: { display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'center', justifyContent: 'center', height: '100%', padding: 24, textAlign: 'center' },
       children: [
-        jsx('div', { className: 'text-sm font-medium', children: '🏢 插件后端没挂上' }),
-        jsx('div', { className: 'text-(--ui-text-tertiary)', children: error }),
-        jsxs('div', {
-          className: 'text-(--ui-text-tertiary)',
-          children: [
-            jsx('div', { children: '检查：Settings → Plugins 里「Hermes 办公室」是否启用；' }),
-            jsx('div', { children: '用户插件要在 config.yaml 的 plugins.enabled 列表里，改动后需要重启 gateway。' }),
-          ],
-        }),
+        jsx('div', { style: { fontSize: 14, fontWeight: 600 }, children: '🏢 插件后端没挂上' }),
+        jsx('div', { style: { color: 'var(--ui-text-tertiary, #9d93ad)' }, children: error }),
+        jsx('div', { style: { color: 'var(--ui-text-tertiary, #9d93ad)', fontSize: 11.5 }, children: '检查：Settings → Plugins 里「Hermes 办公室」是否启用；用户插件要同时进 config.yaml 的 plugins.enabled。' }),
         jsx('button', {
-          type: 'button',
-          className: 'rounded border px-2 py-1',
-          style: { borderColor: 'var(--ui-border, #3a3147)' },
-          onClick: refresh,
+          type: 'button', onClick: refresh,
+          style: { border: '1px solid var(--ui-border, #3a3147)', borderRadius: 8, padding: '5px 12px', background: 'transparent', color: 'inherit', cursor: 'pointer' },
           children: '重试',
         }),
       ],
@@ -288,87 +318,63 @@ function OfficePanel({ full }) {
   }
 
   const tabBtn = (id, label) => jsx('button', {
-    type: 'button',
-    onClick: () => setTab(id),
-    className: 'rounded px-2 py-0.5 text-xs',
+    type: 'button', onClick: () => setTab(id),
     style: {
-      background: tab === id ? 'var(--ui-bg-secondary, #251f30)' : 'transparent',
-      color: tab === id ? 'var(--ui-text, #efe9f5)' : 'var(--ui-text-tertiary, #9d93ad)',
-      cursor: 'pointer',
+      borderRadius: 8, padding: '3px 10px', cursor: 'pointer',
+      border: '1px solid ' + (tab === id ? 'var(--ui-accent, #ffd479)' : 'var(--ui-border, #3a3147)'),
+      background: tab === id ? 'rgba(255,212,121,.12)' : 'transparent',
+      color: tab === id ? 'var(--ui-text, inherit)' : 'var(--ui-text-tertiary, #9d93ad)',
     },
     children: label,
   })
 
   return jsxs('div', {
-    className: 'flex h-full w-full flex-col gap-2 overflow-auto p-2 text-xs',
+    style: { display: 'flex', flexDirection: 'column', gap: 10, padding: 12, height: '100%', overflow: 'auto' },
     children: [
-      // 顶部横幅 + 统计
-      jsxs('div', {
-        className: 'flex flex-wrap items-center gap-2',
-        children: [
-          jsx('div', { className: 'text-sm font-semibold', children: '🏢 ' + (office.title || 'Hermes 办公室') }),
-          office.slogan ? jsx('div', { className: 'text-(--ui-text-tertiary)', children: office.slogan }) : null,
-          jsx('div', { className: 'grow' }),
-          jsx('button', {
-            type: 'button', onClick: refresh,
-            className: 'rounded border px-2 py-0.5',
-            style: { borderColor: 'var(--ui-border, #3a3147)' },
-            children: '刷新',
-          }),
-        ],
-      }),
-      jsxs('div', {
-        className: 'grid gap-1.5',
-        style: { gridTemplateColumns: 'repeat(auto-fit, minmax(84px, 1fr))' },
-        children: [
-          jsx(Stat, { label: 'Token 总量', value: nf(totals.tokens_total) }),
-          jsx(Stat, { label: '成本', value: '$' + (totals.cost_usd || 0).toFixed(4) }),
-          jsx(Stat, { label: '在岗 / 完成', value: (totals.working || 0) + ' / ' + (totals.done || 0) }),
-          jsx(Stat, { label: '工位 / 在编', value: (totals.seats || 0) + ' / ' + (totals.agents || 0) }),
-        ],
-      }),
-      // tab
-      jsxs('div', {
-        className: 'flex items-center gap-1',
-        children: [
-          tabBtn('desks', '🪑 工位'),
-          tabBtn('chat', '💬 聊天室'),
-          jsx('span', { className: 'grow' }),
-          jsx('span', {
-            className: 'text-[0.625rem] text-(--ui-text-tertiary)',
-            children: updatedAt ? '更新于 ' + updatedAt.toLocaleTimeString('zh-CN', { hour12: false }) : '加载中…',
-          }),
-        ],
-      }),
+      // 顶部横幅（公司名 / slogan 可改，存在插件目录的 agents.json 里）
+      jsxs('div', { style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }, children: [
+        jsx('div', { style: { fontSize: 15, fontWeight: 700 }, children: '🏢 ' + (office.title || 'Hermes 办公室') }),
+        office.slogan ? jsx('div', { style: { color: 'var(--ui-text-tertiary, #9d93ad)', fontSize: 12 }, children: office.slogan }) : null,
+        jsx('span', { style: { flex: 1 } }),
+        jsx('button', {
+          type: 'button', onClick: refresh,
+          style: { border: '1px solid var(--ui-border, #3a3147)', borderRadius: 8, padding: '4px 12px', background: 'transparent', color: 'inherit', cursor: 'pointer' },
+          children: '刷新',
+        }),
+      ] }),
+      jsxs('div', { style: { display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))' }, children: [
+        jsx(Stat, { label: 'Token 总量', value: nf(totals.tokens_total) }),
+        jsx(Stat, { label: '成本', value: '$' + (totals.cost_usd || 0).toFixed(4) }),
+        jsx(Stat, { label: '在岗 / 完成', value: (totals.working || 0) + ' / ' + (totals.done || 0) }),
+        jsx(Stat, { label: '工位 / 在编', value: (totals.seats || 0) + ' / ' + (totals.agents || 0) }),
+      ] }),
+      jsxs('div', { style: { display: 'flex', alignItems: 'center', gap: 8 }, children: [
+        tabBtn('desks', '🪑 工位'),
+        tabBtn('chat', '💬 聊天室'),
+        jsx('span', { style: { flex: 1 } }),
+        jsx('span', { style: { fontSize: 10.5, color: 'var(--ui-text-tertiary, #9d93ad)' }, children: updatedAt ? '更新于 ' + updatedAt.toLocaleTimeString('zh-CN', { hour12: false }) : '加载中…' }),
+      ] }),
       tab === 'desks'
-        ? jsxs('div', {
-            className: 'flex flex-col gap-2',
-            children: [
-              // 老板 / 经理
-              jsxs('div', {
-                className: 'grid gap-1.5',
-                style: { gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' },
-                children: [
-                  boss ? jsx(Desk, { key: 'boss', agent: boss, avatars, active: selected === boss.name, onClick: () => setSelected(boss.name) }) : null,
-                  mgr ? jsx(Desk, { key: 'mgr', agent: mgr, avatars, active: selected === mgr.name, onClick: () => setSelected(mgr.name) }) : null,
-                ],
-              }),
-              jsx('div', { className: 'text-(--ui-text-tertiary)', children: '开放工位区 · ' + staff.filter(a => a.exists).length + ' 人在编 / ' + staff.length + ' 个工位' }),
-              jsxs('div', {
-                className: 'grid gap-1.5',
-                style: { gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))' },
-                children: staff.map(a => jsx(Desk, {
-                  key: a.name, agent: a, avatars, active: selected === a.name, onClick: () => setSelected(a.name),
-                })),
-              }),
-              sel ? jsx(Detail, { agent: sel, avatars }) : null,
-            ],
-          })
+        ? jsxs('div', { style: { display: 'flex', flexDirection: 'column', gap: 10 }, children: [
+            jsx(Room, {
+              title: '👑 老板 · 📋 经理办公室',
+              note: '点办公室 = 派活',
+              tall: true,
+              children: [boss, mgr].filter(Boolean).map(a => jsx(Desk, {
+                key: a.name, agent: a, avatars, active: selected === a.name, onClick: () => setSelected(selected === a.name ? null : a.name),
+              })),
+            }),
+            jsx(Room, {
+              title: '开放工位区',
+              note: `${staff.filter(a => a.exists).length} 人在编 / ${staff.length} 个工位`,
+              children: staff.map(a => jsx(Desk, {
+                key: a.name, agent: a, avatars, active: selected === a.name, onClick: () => setSelected(selected === a.name ? null : a.name),
+              })),
+            }),
+            sel ? jsx(Detail, { agent: sel, avatars, onClose: () => setSelected(null) }) : null,
+          ] })
         : jsx(Feed, { feed: data ? data.feed : [], avatars, agents }),
-      jsx('div', {
-        className: 'text-[0.625rem] text-(--ui-text-tertiary)',
-        children: '数据：' + ((data && data.hermes_home) || '?') + ' · 只读（kanban.db + 各 profile 的 state.db）',
-      }),
+      jsx('div', { style: { fontSize: 10.5, color: 'var(--ui-text-tertiary, #9d93ad)' }, children: '数据：' + ((data && data.hermes_home) || '?') + ' · 只读（kanban.db + 各 profile 的 state.db）' }),
     ],
   })
 }
@@ -379,15 +385,13 @@ function OfficeChip() {
   const { data } = useOfficeData()
   const working = data ? ((data.totals && data.totals.working) || 0) : 0
   const tokens = data ? ((data.totals && data.totals.tokens_total) || 0) : 0
-  const color = working > 0 ? '#4fd18b' : '#8a819e'
   return jsxs('button', {
     type: 'button',
     title: 'Hermes 办公室：' + (data ? (working + ' 人在岗 · ' + nf(tokens) + ' tok') : '加载中'),
-    className: 'flex items-center gap-1 px-1.5 text-[0.6875rem] text-(--ui-text-tertiary)',
-    style: { cursor: 'pointer' },
     onClick: () => { if (SDK.haptic) SDK.haptic('tap'); host.navigate(PAGE_PATH) },
+    style: { display: 'flex', alignItems: 'center', gap: 4, padding: '0 6px', fontSize: 11, color: 'var(--ui-text-tertiary, #9d93ad)', background: 'transparent', border: 'none', cursor: 'pointer' },
     children: [
-      jsx('span', { style: { display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: color } }),
+      jsx('span', { style: { width: 6, height: 6, borderRadius: '50%', background: working ? '#4fd18b' : '#8a819e' } }),
       jsx('span', { children: '办公室' + (working ? ' ' + working : '') }),
     ],
   })
@@ -404,8 +408,8 @@ export default {
     CTX = ctx
 
     ctx.registerMany([
-      { id: 'pane', area: AREA.panes, title: 'office', data: { placement: 'right', width: '480px' }, render: () => jsx(OfficePanel, { full: false }) },
-      { id: 'page', area: AREA.routes, data: { path: PAGE_PATH }, render: () => jsx(OfficePanel, { full: true }) },
+      { id: 'pane', area: AREA.panes, title: 'office', data: { placement: 'right', width: '480px' }, render: () => jsx(OfficePanel, {}) },
+      { id: 'page', area: AREA.routes, data: { path: PAGE_PATH }, render: () => jsx(OfficePanel, {}) },
       { id: 'nav', area: AREA.nav, data: { path: PAGE_PATH, label: 'Hermes 办公室', codicon: 'organization' } },
       { id: 'chip', area: AREA.statusRight, order: 140, render: () => jsx(OfficeChip, {}) },
       { id: 'open', area: AREA.palette, data: { id: 'hermes-office.open', label: '打开 Hermes 办公室', keywords: ['office', 'bangongshi', 'kanban', 'agent', '工位'], run: () => host.navigate(PAGE_PATH) } },
