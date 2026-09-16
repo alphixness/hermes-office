@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Hermes 办公室</title>
+<style>
+  :root{
+    --bg:#141019; --wall:#2b2436; --wall2:#221c2c; --floor:#3a2f46; --floor2:#332a3e;
+    --panel:#211b2b; --card:#2a2334; --line:#3a3147;
+    --fg:#efe9f5; --muted:#9d93ad; --accent:#ffd479;
+    --working:#5ee9a4; --queued:#ffc861; --blocked:#ff7b7b; --idle:#7c7391; --vacant:#4a4358;
+    --desk:#a3714a; --desk2:#8c5f3d; --deskt:#c08a5e;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--fg);overflow:hidden;
+       font:14px/1.55 "Inter","PingFang SC","Microsoft YaHei",system-ui,sans-serif}
+
+  /* ===== 顶栏 ===== */
+  header{display:flex;align-items:center;gap:12px;padding:8px 18px;
+         background:linear-gradient(180deg,#241d2f,#1a1522);border-bottom:1px solid var(--line)}
+  header .plaque{font-weight:700;letter-spacing:1px;font-size:15px}
+  .badge{background:#2d2539;color:var(--muted);border-radius:999px;padding:3px 11px;font-size:12px}
+  .badge.on{background:rgba(94,233,164,.14);color:var(--working)}
+  header .spacer{flex:1}
+  /* 顶部横幅：公司名 + slogan，点 ✏️ 可自定义（存 agents.json 的 OFFICE 段） */
+  .slogan{font-size:12.5px;color:var(--muted);letter-spacing:.4px;
+          border-left:1px solid var(--line);padding-left:12px;max-width:52vw;
+          overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .editbtn{font:inherit;font-size:12px;cursor:pointer;color:var(--muted);background:#2d2539;
+           border:1px solid var(--line);border-radius:8px;padding:3px 9px}
+  .editbtn:hover{color:var(--fg);border-color:#4d4262}
+  .bfield{width:100%;font:inherit;font-size:13px;color:var(--fg);background:#171221;
+          border:1px solid var(--line);border-radius:8px;padding:9px 11px;margin:6px 0 10px}
+  .blabel{font-size:11.5px;color:var(--muted)}
+
+  main{display:grid;grid-template-columns:1fr 372px;height:calc(100vh - 45px);min-height:0}
+
+  /* ===== 办公室场景 ===== */
+  #scene{position:relative;overflow:auto;padding:0 18px 14px;
+         background:
+           linear-gradient(180deg,#241d2f 0%,#241d2f 56px,transparent 56px),
+           repeating-linear-gradient(90deg,var(--floor) 0 46px,var(--floor2) 46px 92px)}
+  #scene::before{content:'';position:absolute;inset:52px 0 auto 0;height:14px;
+         background:linear-gradient(180deg,#3a3048,#2b2436);border-top:1px solid #453a56;
+         border-bottom:1px solid #1d1826}
+  .window{position:absolute;top:9px;left:22px;width:170px;height:34px;border-radius:7px;
+          background:linear-gradient(180deg,#8fd3ff,#c9a7ff 60%,#ffc6e0);
+          box-shadow:0 0 0 4px #3a3048,0 6px 18px rgba(143,211,255,.18);opacity:.9}
+  .window::after{content:'';position:absolute;inset:0;border-radius:8px;
+          background:linear-gradient(90deg,transparent 48%,rgba(58,48,72,.85) 48% 52%,transparent 52%)}
+  .plant{position:absolute;top:14px;right:24px;font-size:26px;filter:saturate(.85)}
+  .water{position:absolute;right:26px;top:64px;font-size:20px;opacity:.9}
+
+  .zone{margin:58px 0 7px;font-size:12px;letter-spacing:2px;color:var(--muted);
+        display:flex;align-items:center;gap:9px}
+  .zone.tight{margin:10px 0 7px}
+  .zone span{background:var(--wall2);padding:3px 10px;border-radius:6px;border:1px solid var(--line)}
+  .zone .hint{margin-left:auto;letter-spacing:0;font-size:11px;opacity:.75}
+
+  /* ===== 工位（尺寸沿用上一版，未改动） ===== */
+  .floor-grid{display:grid;gap:9px;grid-template-columns:repeat(auto-fill,minmax(196px,1fr))}
+  .desk{position:relative;border-radius:13px;padding:7px 9px 6px;
+        background:linear-gradient(180deg,#2c2537,#251f30);border:1px solid var(--line);
+        cursor:pointer;transition:.16s}
+  .desk:hover{transform:translateY(-3px);border-color:#4d4262}
+  .desk.working{border-color:rgba(94,233,164,.5);box-shadow:0 0 24px -8px rgba(94,233,164,.45)}
+  .desk.blocked{border-color:rgba(255,123,123,.5)}
+  .desk.vacant{opacity:.75;border-style:dashed}
+  .desk.boss{border-color:rgba(255,212,121,.45)}
+  .desk.boss .avatar{border-color:var(--accent)}
+  .desk.manager{border-color:rgba(168,188,255,.4)}
+  .desk.manager .avatar{border-color:#a8bcff}
+  .desk .doorplate{position:absolute;left:11px;top:8px;font-size:10.5px;letter-spacing:1px;
+        color:var(--accent);background:rgba(255,212,121,.10);border:1px solid rgba(255,212,121,.32);
+        border-radius:6px;padding:1px 7px}
+  .desk.boss .doorplate{color:#ffe6a8}
+  .desk.manager .doorplate{color:#c9d4ff;background:rgba(168,188,255,.10);border-color:rgba(168,188,255,.32)}
+
+  .avatar{position:relative;width:72px;height:72px;margin:2px auto 5px;border-radius:50%;
+          background:#1b1622 center/cover no-repeat;border:3px solid var(--idle);transition:.2s}
+  .working .avatar{border-color:var(--working);animation:breathe 2.2s ease-in-out infinite}
+  .blocked .avatar{border-color:var(--blocked);transform:rotate(-6deg)}
+  .queued .avatar{border-color:var(--queued)}
+  .vacant .avatar{border-color:var(--vacant);filter:grayscale(1) brightness(.7)}
+  .avatar .init{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+                font-size:26px;color:var(--muted)}
+  @keyframes breathe{0%,100%{box-shadow:0 0 0 0 rgba(94,233,164,.45)}
+                     50%{box-shadow:0 0 0 10px rgba(94,233,164,0)}}
+
+  .bubble{min-height:25px;font-size:11.5px;color:#d9d2e6;background:#1d1727;
+          border:1px solid var(--line);border-radius:8px;padding:4px 7px;margin-bottom:6px;
+          white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .bubble.work{border-color:rgba(94,233,164,.35);color:#cdf7e3}
+  .bubble .none{color:var(--muted)}
+
+  .desk-top{background:linear-gradient(180deg,var(--deskt),var(--desk) 45%,var(--desk2));
+            border-radius:10px;padding:6px 9px;box-shadow:inset 0 1px 0 rgba(255,255,255,.18),
+            0 6px 12px -6px #000}
+  .name{font-size:13px;font-weight:700;color:#2b1c10;letter-spacing:.3px}
+  .role{font-size:10.5px;color:#4a3524}
+  .desk-top .stat{float:right;font-size:10.5px;color:#3d2a1a;text-align:right;line-height:1.35}
+  .monitor{margin:7px auto 0;width:78%;background:#15111c;border:3px solid #46394f;
+           border-radius:6px 6px 3px 3px;padding:4px 6px;font-size:10px;color:#9ee6c4;
+           font-family:"JetBrains Mono",ui-monospace,Consolas,monospace;height:32px;overflow:hidden}
+  .monitor.dim{color:#5f5670}
+  .stand{width:16px;height:5px;margin:0 auto 4px;background:#46394f;border-radius:0 0 3px 3px}
+
+  .hiring{position:absolute;right:10px;top:8px;background:rgba(255,212,121,.14);
+          color:var(--accent);border:1px dashed rgba(255,212,121,.5);border-radius:8px;
+          font-size:10.5px;padding:2px 7px}
+
+  /* ⚠️ 150% 缩放时窗口虽大、CSS 视口却只有 ~960x600，必须靠下面这些紧凑规则兜住，否则一定要滚动 */
+  @media (max-width: 1300px){ main{grid-template-columns:1fr 330px} }
+  @media (max-height: 820px){
+    .avatar{width:54px;height:54px}
+    .bubble{min-height:20px;font-size:10.5px;padding:3px 6px;margin-bottom:4px}
+    .desk{padding:5px 7px 4px} .desk-top{padding:3px 6px}
+    .name{font-size:11.5px} .role{font-size:9.5px}
+    .desk-top .stat{font-size:9px}
+    .zone{margin:44px 0 5px} .zone.tight{margin:6px 0 5px}
+    .floor-grid{gap:7px;grid-template-columns:repeat(auto-fill,minmax(158px,1fr))}
+    .desk .doorplate{font-size:9px;padding:1px 5px}
+    .hiring{font-size:9.5px;padding:1px 5px}
+  }
+  @media (max-height: 700px){
+    .avatar{width:46px;height:46px;border-width:2px}
+    .bubble{min-height:18px;font-size:10px}
+    .floor-grid{gap:6px;grid-template-columns:repeat(auto-fill,minmax(140px,1fr))}
+    .zone{margin:38px 0 4px}
+    main{grid-template-columns:1fr 320px}
+  }
+  @media (min-width: 1600px) and (min-height: 900px){
+    .avatar{width:80px;height:80px}
+    .floor-grid{gap:12px;grid-template-columns:repeat(auto-fill,minmax(212px,1fr))}
+  }
+
+  /* ===== 右侧面板 ===== */
+  aside{border-left:1px solid var(--line);background:var(--panel);display:flex;flex-direction:column;min-height:0}
+  .tabs{display:flex;gap:4px;padding:9px 12px 0}
+  .tabs button{flex:1;font:inherit;font-size:12px;padding:6px 8px;cursor:pointer;color:var(--muted);
+    background:#251f30;border:1px solid var(--line);border-bottom:none;border-radius:8px 8px 0 0}
+  .tabs button.on{color:var(--fg);background:var(--card);border-color:#4d4262}
+  .panelbody{flex:1;min-height:0;overflow:auto;padding:12px}
+  h2{font-size:11px;letter-spacing:1.6px;color:var(--muted);margin:2px 0 9px}
+  .stat-card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 13px;margin-bottom:10px}
+  .stat-card .big{font-size:21px;font-weight:800;letter-spacing:.3px}
+  .stat-card .lbl{font-size:11.5px;color:var(--muted);margin-top:2px}
+  .row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;text-align:center}
+  .row3 span{display:block;font-size:17px;font-weight:700}
+  .bars{display:flex;flex-direction:column;gap:8px}
+  .bar{font-size:11.5px}
+  .bar .l{display:flex;justify-content:space-between;color:var(--muted);margin-bottom:3px}
+  .bar .track{height:6px;background:#171221;border-radius:99px;overflow:hidden}
+  .bar .fill{height:100%;border-radius:99px;background:linear-gradient(90deg,#ffd479,#5ee9a4)}
+
+  /* 互动动态 */
+  .feed-item{display:flex;gap:8px;padding:7px 8px;border-radius:9px;margin-bottom:6px;
+     background:#251f30;border:1px solid #302940}
+  .feed-item .fa{flex:0 0 26px;width:26px;height:26px;border-radius:50%;background:#1b1622 center/cover no-repeat;
+     display:flex;align-items:center;justify-content:center;font-size:13px}
+  .feed-item .fm{min-width:0;flex:1}
+  .feed-item .fh{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted)}
+  .feed-item .fh b{color:#e3dbf2;font-size:11.5px}
+  .feed-item .fx{font-size:11.5px;color:#cbc2de;white-space:pre-wrap;word-break:break-word;
+     display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;margin-top:2px}
+  .kchip{font-size:9.5px;padding:1px 6px;border-radius:99px;border:1px solid var(--line);color:var(--muted)}
+  .k-comment{color:#ffd9a8;border-color:rgba(255,217,168,.4)}
+  .k-completed{color:#9ff0c4;border-color:rgba(94,233,164,.4)}
+  .k-blocked,.k-gave_up{color:#ffb3b0;border-color:rgba(255,123,123,.45)}
+  .k-run{color:#b6d4ff;border-color:rgba(140,180,255,.4)}
+  .empty{color:var(--muted);font-size:11.5px;padding:4px 0}
+
+  /* ===== 聊天室 ===== */
+  .panelbody.chat{padding:0;display:flex;flex-direction:column;overflow:hidden}
+  .chatlist{flex:1;min-height:0;overflow:auto;padding:10px;display:flex;flex-direction:column;gap:8px}
+  .cm{display:flex;gap:7px;align-items:flex-start}
+  .cm.mine{flex-direction:row-reverse}
+  .cav{flex:0 0 26px;width:26px;height:26px;border-radius:50%;background:#1b1622 center/cover no-repeat;
+       display:flex;align-items:center;justify-content:center;font-size:12px;border:1px solid var(--line)}
+  .cbub{max-width:82%;background:#251f30;border:1px solid #302940;border-radius:11px;padding:6px 9px}
+  .cm.mine .cbub{background:rgba(255,212,121,.13);border-color:rgba(255,212,121,.4)}
+  .cname{font-size:11px;color:#e3dbf2;font-weight:600;display:flex;gap:6px;align-items:center;margin-bottom:2px}
+  .ctext{font-size:11.5px;color:#e6dff3;white-space:pre-wrap;word-break:break-word}
+  .ctask{font-size:10.5px;color:#8a819e;margin-top:3px}
+  .cmeta{font-size:10px;color:var(--muted);margin-top:3px}
+  .tid{color:#ffe0a8}
+  .composer{flex:0 0 auto;border-top:1px solid var(--line);background:#1f1a29;padding:9px 11px 11px;position:relative}
+  .cstatus{display:none;font-size:10.5px;color:var(--muted);margin:0 2px 6px}
+  .cstatus.on{display:block}
+  .cbox{position:relative;background:#171221;border:1px solid #3a3147;border-radius:12px;transition:border-color .15s}
+  .cbox:focus-within{border-color:#5b4e73}
+  .cbox textarea{display:block;width:100%;box-sizing:border-box;background:transparent;border:none;outline:none;
+     resize:none;color:var(--fg);font:inherit;font-size:12.5px;line-height:1.55;
+     padding:9px 46px 9px 11px;min-height:64px;max-height:168px;overflow:auto}
+  .cbox textarea::placeholder{color:#6e6583}
+  .cbox .sendbtn{position:absolute;right:7px;bottom:7px;width:31px;height:31px;border-radius:9px;border:none;
+     cursor:pointer;background:linear-gradient(180deg,#ffe1a4,#f0c063);color:#2b1c10;font-size:13px;line-height:1;
+     display:flex;align-items:center;justify-content:center;box-shadow:0 2px 6px rgba(0,0,0,.35)}
+  .cbox .sendbtn:disabled{opacity:.5;cursor:default}
+  .mentionbox{position:absolute;left:0;right:0;bottom:calc(100% + 5px);display:none;max-height:196px;overflow:auto;
+              background:#1c1726;border:1px solid #4d4262;border-radius:10px;
+              box-shadow:0 10px 26px rgba(0,0,0,.55);z-index:6}
+  .mitem{display:flex;align-items:center;gap:8px;padding:6px 9px;cursor:pointer;font-size:12px}
+  .mitem:hover{background:rgba(255,212,121,.13)}
+  .mav{width:22px;height:22px;border-radius:50%;background:#1b1622 center/cover no-repeat;border:1px solid var(--line)}
+  .mrole{color:var(--muted);font-size:10.5px;margin-left:auto}
+
+  /* ===== 弹出窗口（详情 + 派活） ===== */
+  .mask{position:fixed;inset:0;background:rgba(10,7,16,.62);display:none;
+        align-items:center;justify-content:center;z-index:30;padding:22px}
+  .mask.on{display:flex}
+  .sheet{width:min(660px,94vw);max-height:88vh;overflow:auto;border-radius:14px;
+     background:linear-gradient(180deg,#2a2334,#221c2c);border:1px solid #4d4262;
+     box-shadow:0 24px 60px rgba(0,0,0,.6)}
+  .sheet .sh{display:flex;align-items:center;gap:11px;padding:13px 16px;border-bottom:1px solid var(--line)}
+  .sheet .sh .av{width:46px;height:46px;border-radius:50%;background:#1b1622 center/cover no-repeat;border:2px solid var(--line)}
+  .sheet .sh .who b{font-size:15px}
+  .sheet .sh .who div{font-size:11.5px;color:var(--muted);margin-top:2px}
+  .sheet .sh .x{margin-left:auto;cursor:pointer;color:var(--muted);font-size:19px;line-height:1;
+        padding:2px 9px;border-radius:8px;border:1px solid var(--line);background:#251f30}
+  .sheet .sb{padding:14px 16px}
+  .sect{margin-bottom:14px}
+  .sect h4{margin:0 0 7px;font-size:12px;color:var(--accent);font-weight:650;letter-spacing:.4px}
+  .taskrow{display:flex;align-items:center;gap:8px;font-size:11.5px;padding:6px 8px;border-radius:7px;
+     background:#251f30;margin-bottom:5px;border-left:2px solid var(--line)}
+  .taskrow.w{border-left-color:var(--working)} .taskrow.d{border-left-color:#8ca8ff}
+  .taskrow.q{border-left-color:var(--queued)} .taskrow.b{border-left-color:var(--blocked)}
+  .taskrow .st{font-size:10px;color:var(--muted);white-space:nowrap}
+  .taskrow .by{font-size:10px;color:var(--accent);white-space:nowrap}
+  .assignbox{background:rgba(255,212,121,.07);border:1px solid rgba(255,212,121,.3);border-radius:10px;padding:11px}
+  .assignbox input,.assignbox textarea{width:100%;font:inherit;font-size:12px;color:var(--fg);
+     background:#171221;border:1px solid var(--line);border-radius:7px;padding:7px 9px;margin-bottom:7px;resize:vertical}
+  .assignbox textarea{min-height:54px}
+  .assignbox .row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .assignbox button{font:inherit;font-size:12.5px;font-weight:650;cursor:pointer;color:#2b1c10;
+     background:linear-gradient(180deg,#ffe1a4,#f0c063);border:none;border-radius:8px;padding:8px 14px}
+  .assignbox button:disabled{opacity:.55;cursor:default}
+  .assignbox .ghost{background:#2d2539;color:var(--fg);border:1px solid var(--line);font-weight:400}
+  .assignbox .msg{font-size:11.5px;margin-top:7px;color:var(--muted);white-space:pre-wrap;word-break:break-all}
+  .assignbox .msg.ok{color:#9ff0c4} .assignbox .msg.err{color:#ffb3b0}
+  code{background:#171221;padding:1px 5px;border-radius:4px;font-size:11px;color:#ffe0a8}
+</style>
+</head>
+<body>
+<header>
+  <span class="plaque" id="officeTitle">🏢 Hermes 办公室</span>
+  <span class="slogan" id="officeSlogan"></span>
+  <button class="editbtn" id="editBanner" title="自定义公司名 / slogan">✏️ 改标语</button>
+  <span class="spacer"></span>
+  <span class="badge" id="win">统计窗口：—</span>
+  <span class="badge" id="busy">当前无人干活</span>
+  <span class="badge" id="live">● 连接中…</span>
+</header>
+
+<main>
+  <div id="scene">
+    <div class="plant">🪴</div>
+    <div class="water">☕</div>
+
+    <div class="zone"><span>老板 · 经理办公室</span>
+      <span class="hint">点办公室可直接派活 →</span></div>
+    <div class="floor-grid" id="suite"></div>
+
+    <div class="zone tight"><span>开放工位区</span>
+      <span class="hint" id="zonecount"></span></div>
+    <div class="floor-grid" id="staff"></div>
+  </div>
+
+  <aside>
+    <div class="tabs">
+      <button class="on" data-tab="chat">💬 聊天室</button>
+      <button data-tab="stats">📊 统计排行</button>
+    </div>
+    <div class="panelbody" id="pane"></div>
+  </aside>
+</main>
+
+<div class="mask" id="mask"><div class="sheet" id="sheet"></div></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const fmt = n => n >= 1e6 ? (n/1e6).toFixed(2)+'M' : n >= 1e3 ? (n/1e3).toFixed(1)+'k' : String(n||0);
+const nf = n => (n||0).toLocaleString('en-US');
+const shortT = t => t ? String(t).replace('T',' ').slice(5,16) : '—';
+const STATE_CN = {working:'在岗干活', queued:'排队待命', blocked:'卡住了', idle:'空闲', done:'收工', vacant:'招人中', human:'本人'};
+
+let DATA = null, TAB = 'chat';
+
+const nameOf = id => (DATA && (DATA.agents.find(a=>a.name===id)||{}).display_name) || id || '?';
+
+function deskHTML(a, opts={}){
+  const seat = opts.seat || null;
+  const exists = a && a.exists;
+  const st = !exists ? 'vacant' : (a.state || 'idle');
+  const cur = a && a.current ? a.current.title : null;
+  const act = a && a.last_activity ? a.last_activity : null;
+  const line = seat === 'boss' ? '👑 点我派活给经理 →'
+             : cur ? '🔨 ' + cur : (act ? '⚡ ' + act : '');
+  const av = a && a.avatar ? `background-image:url('${a.avatar}')` : '';
+  const init = a && a.display_name ? a.display_name.slice(0,1) : '?';
+  const plate = seat === 'boss' ? '👑 老板办公室' : seat === 'manager' ? '📋 经理办公室' : '';
+  const done = a && a.counts ? a.counts.done : 0;
+  const tok = a ? nf(a.tokens.total) : '0';
+  return `<div class="desk ${st}${seat?(' '+seat):''}" data-id="${esc(a?a.name:'')}" data-seat="${seat||''}">
+    ${plate ? `<div class="doorplate">${plate}</div>` : ''}
+    ${exists ? '' : '<div class="hiring">招人中</div>'}
+    <div class="avatar" style="${av}">${a&&a.avatar?'':`<span class="init">${esc(init)}</span>`}</div>
+    <div class="bubble ${st==='working'?'work':''}">${line ? esc(line) : '<span class="none">— 暂时没事做 —</span>'}</div>
+    <div class="desk-top">
+      <span class="stat">${exists ? `完成 ${done}<br>${tok}` : ''}</span>
+      <div class="name">${esc(a ? a.display_name : '招人中')}</div>
+      <div class="role">${esc(a ? (a.role + ' · ' + (STATE_CN[st]||st)) : '—— 空岗 ——')}</div>
+    </div>
+  </div>`;
+}
+
+function feedHTML(){
+  const f = DATA.feed || [];
+  if(!f.length) return '<div class="empty">还没有互动记录。派一个任务给员工，这里就会出现他们之间的交流。</div>';
+  return f.map(x => {
+    const av = x.author ? DATA.agents.find(a => a.name === x.author) : null;
+    const img = av && av.avatar ? `style="background-image:url('${av.avatar}')"` : '';
+    const who = av ? esc(av.display_name) : (x.author ? esc(x.author) : '系统');
+    const icon = av ? '' : ({completed:'✅',spawned:'🧩',claimed:'🤝',blocked:'⛔',commented:'💬',run:'🎬'}[x.kind] || '•');
+    return `<div class="feed-item">
+      <div class="fa" ${img}>${icon}</div>
+      <div class="fm">
+        <div class="fh"><b>${who}</b><span class="kchip k-${esc(x.kind)}">${esc(x.kind==='run'?(x.role||'run'):x.kind)}</span>
+          <span style="margin-left:auto">${esc(shortT(x.at))}</span></div>
+        ${x.text ? `<div class="fx">${esc(x.text)}</div>` : ''}
+        ${x.task ? `<div class="fx" style="color:#8a819e;font-size:10.5px;-webkit-line-clamp:1">📋 ${esc(x.task)}</div>` : ''}
+      </div></div>`;
+  }).join('');
+}
+
+function statsHTML(){
+  const t = DATA.totals;
+  const rank = [...DATA.agents].sort((a,b)=>b.tokens.total-a.tokens.total).slice(0,10);
+  const max = Math.max(1, ...rank.map(a=>a.tokens.total));
+  return `
+  <h2>本轮总览</h2>
+  <div class="stat-card"><div class="big">${nf(t.tokens_total)}</div>
+    <div class="lbl">Token 消耗 · 成本 $${(t.cost_usd||0).toFixed(4)}</div></div>
+  <div class="stat-card row3">
+    <div><span>${t.running||0}</span><div class="lbl">在岗干活</div></div>
+    <div><span>${t.done||0}</span><div class="lbl">已完成</div></div>
+    <div><span>${t.blocked||0}</span><div class="lbl">卡住了</div></div>
+  </div>
+  <div class="stat-card row3">
+    <div><span>${t.seats||0}</span><div class="lbl">工位</div></div>
+    <div><span>${t.agents||0}</span><div class="lbl">在编</div></div>
+    <div><span>${esc(DATA.window)}</span><div class="lbl">统计窗口</div></div>
+  </div>
+  <h2>员工 Token 排行</h2>
+  <div class="bars">${rank.map(a=>`
+    <div class="bar"><div class="l"><span>${esc(a.display_name)}</span><span>${nf(a.tokens.total)}</span></div>
+      <div class="track"><div class="fill" style="width:${Math.round(a.tokens.total/max*100)}%"></div></div></div>`).join('')}
+  </div>
+  <h2 style="margin-top:14px">数据来源</h2>
+  <div class="empty">kanban.db（任务 / 评论 / 事件）<br>各 profile 的 state.db（Token · 成本）<br>
+    <code>${esc(DATA.hermes_home)}</code></div>`;
+}
+
+function chatHTML(){
+  const msgs = DATA.chat || [];
+  const list = msgs.map(m => {
+    const av = m.author ? DATA.agents.find(a => a.name === m.author) : null;
+    const img = av && av.avatar ? `style="background-image:url('${av.avatar}')"` : '';
+    const icon = av ? '' : ({completed:'✅',spawned:'🧩',claimed:'🤝',blocked:'⛔',commented:'💬',run:'🎬'}[m.kind] || '•');
+    if(m.who === 'boss'){
+      return `<div class="cm mine">
+        <div class="cav" style="background-image:url('/avatars_256/default.jpg')"></div>
+        <div class="cbub">
+          <div class="ctext">${esc(m.text)}</div>
+          <div class="cmeta">你 → <b style="color:#ffe0a8">${esc(m.assignee_name || m.assignee || '')}</b>
+            · ${esc(shortT(m.at))}${m.task_id ? ` · <span class="tid">${esc(m.task_id)}</span>` : ''}${m.ok === false ? ' · <span style="color:#ffb3b0">派活失败</span>' : ''}</div>
+        </div>
+      </div>`;
+    }
+    return `<div class="cm">
+      <div class="cav" ${img}>${icon}</div>
+      <div class="cbub">
+        <div class="cname">${esc(m.name || '系统')}
+          ${m.kind ? `<span class="kchip k-${esc(m.kind)}">${esc(m.kind)}</span>` : ''}</div>
+        ${m.text ? `<div class="ctext">${esc(m.text)}</div>` : ''}
+        ${m.task ? `<div class="ctask">📋 ${esc(m.task)}</div>` : ''}
+        <div class="cmeta">${esc(shortT(m.at))}</div>
+      </div>
+    </div>`;
+  }).join('');
+  return `
+  <div class="chatlist" id="chatlist">
+    ${list || '<div class="empty">还没有对话。给团队留一句话，或输入 <b>@</b> 直接派活。</div>'}
+  </div>
+  <div class="composer">
+    <div class="cstatus" id="chatHint"></div>
+    <div class="cbox">
+      <div class="mentionbox" id="mentionBox"></div>
+      <textarea id="chatInput" rows="3" autocomplete="off"
+        placeholder="给团队留言，或输入 @ 选员工派活…&#10;@某人 → 把这条直接派给他；不 @ 则默认派给经理（我），由我分派&#10;Enter 发送 · Shift+Enter 换行"></textarea>
+      <button class="sendbtn" id="chatSend" title="发送（Enter）">➤</button>
+    </div>
+  </div>`;
+}
+
+function bindComposer(){
+  const inp = $('#chatInput'), box = $('#mentionBox'), hint = $('#chatHint'), btn = $('#chatSend');
+  if(!inp) return;
+  const cands = () => {
+    const m = inp.value.match(/@([^\s@]*)$/);
+    if(!m) return null;
+    const q = (m[1] || '').toLowerCase();
+    return (DATA.agents || []).filter(a => !a.human &&
+        ((a.display_name || '').toLowerCase().includes(q) || (a.name || '').toLowerCase().includes(q))).slice(0, 8);
+  };
+  const pick = name => {
+    inp.value = inp.value.replace(/@([^\s@]*)$/, '@' + name + ' ');
+    box.style.display = 'none'; inp.focus();
+  };
+  const refresh = () => {
+    const list = cands();
+    if(!list || !list.length){ box.style.display = 'none'; box.innerHTML = ''; return; }
+    box.style.display = 'block';
+    box.innerHTML = list.map(a => `<div class="mitem" data-name="${esc(a.display_name)}">
+        <span class="mav" ${a.avatar ? `style="background-image:url('${a.avatar}')"` : ''}></span>
+        <b>${esc(a.display_name)}</b><span class="mrole">${esc(a.role)}</span></div>`).join('');
+    box.querySelectorAll('.mitem').forEach(el => el.onclick = () => pick(el.dataset.name));
+  };
+  const send = async () => {
+    const text = inp.value.trim();
+    if(!text) return;
+    btn.disabled = true; setStatus('正在派活…', true);
+    try{
+      const r = await fetch('/api/chat', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({text})});
+      const j = await r.json();
+      setStatus(j.ok
+        ? `✅ 已派给 ${j.assignee_name || j.assignee}${j.task_id ? ' · ' + j.task_id : ''}`
+        : `❌ ${j.message || '失败'}`, true);
+      if(j.ok){ inp.value = ''; autoGrow(); box.style.display = 'none'; await load(); }
+    }catch(e){ setStatus('❌ 请求失败：' + e, true); }
+    btn.disabled = false;
+  };
+  const setStatus = (t, on) => {
+    hint.textContent = t || '';
+    hint.classList.toggle('on', !!on && !!t);
+  };
+  const autoGrow = () => { inp.style.height = 'auto'; inp.style.height = Math.min(168, inp.scrollHeight) + 'px'; };
+  inp.oninput = () => { refresh(); autoGrow(); };
+  inp.onkeydown = e => {
+    if(e.key === 'Enter' && !e.shiftKey){
+      const list = cands();
+      if(list && list.length){ pick(list[0].display_name); e.preventDefault(); return; }
+      e.preventDefault(); send();
+    }
+    if(e.key === 'Escape'){ box.style.display = 'none'; }
+  };
+  btn.onclick = send;
+  autoGrow();
+}
+
+function renderPane(){
+  const pane = $('#pane');
+  if(TAB === 'chat'){
+    pane.className = 'panelbody chat';
+    pane.innerHTML = chatHTML();
+    bindComposer();
+    const cl = $('#chatlist');
+    if(cl) cl.scrollTop = cl.scrollHeight;
+  }else{
+    pane.className = 'panelbody';
+    pane.innerHTML = statsHTML();
+  }
+}
+
+/* ---------- 抽屉：详情 + 派活 ---------- */
+function openSheet(a){
+  if(!a) a = DATA.agents.find(x => x.seat === 'manager') || DATA.agents[0];
+  const st = a.exists ? (a.state || 'idle') : 'vacant';
+  const tasks = a.tasks || [], recs = a.recent || [];
+  const target = a.name;
+  $('#sheet').innerHTML = `
+    <div class="sh">
+      <div class="av" ${a.avatar?`style="background-image:url('${a.avatar}')"`:''}></div>
+      <div class="who"><b>${esc(a.display_name)}</b>
+        <div>${esc(a.role)} · ${esc(STATE_CN[st]||st)} · profile <code>${esc(a.name)}</code>${a.exists?'':' · 该 profile 还没建，先 <code>hermes profile create '+esc(a.name)+'</code>'}</div>
+      </div>
+      <span class="x" id="closeSheet">✕</span>
+    </div>
+    <div class="sb">
+      ${a.current ? `<div class="sect"><h4>正在干</h4>
+        <div class="taskrow w"><span class="st">🔨</span><span style="flex:1">${esc(a.current.title)}</span>
+        <span class="st">${esc(shortT(a.current.started_at))}</span></div></div>` : ''}
+      <div class="sect"><h4>任务记录（最近 ${tasks.length} 条）</h4>
+        ${tasks.length ? tasks.map(t=>`<div class="taskrow ${t.bucket==='working'?'w':t.bucket==='done'?'d':t.bucket==='blocked'?'b':'q'}">
+          <span class="st">[${esc(t.status)}]</span><span style="flex:1">${esc(t.title)}</span>
+          ${t.created_by?`<span class="by">由 ${esc(nameOf(t.created_by))} 派</span>`:''}
+          <span class="st">${esc(shortT(t.updated_at))}</span></div>`).join('')
+          : '<div class="empty">这个工位还没有任务。</div>'}
+      </div>
+      ${recs.length ? `<div class="sect"><h4>最近工作记录（来自它自己的 state.db）</h4>
+        ${recs.map(r=>`<div class="taskrow"><span class="st">${esc(shortT(r.at))}</span>
+          <span style="flex:1">${esc(r.title)}</span><span class="st">$${(r.cost_usd||0).toFixed(4)}</span></div>`).join('')}
+      </div>` : ''}
+      <div class="sect"><h4>给「${esc(a.display_name)}」派活</h4>
+        <div class="assignbox">
+          <input id="aTitle" placeholder="任务标题，例如：实现每日签到的双倍积分逻辑">
+          <textarea id="aBody" placeholder="补充说明 / 验收标准（可留空）"></textarea>
+          <div class="row">
+            <button id="aGo">🚀 派活</button>
+            <button class="ghost" id="aCopy">复制命令</button>
+            <span id="aMsg" class="msg"></span>
+          </div>
+          <div class="msg">走官方 CLI <code>hermes kanban create</code> 写入看板；员工由 gateway 调度，页面几秒后自动刷新。</div>
+        </div>
+      </div>
+    </div>`;
+  $('#mask').classList.add('on');
+  $('#closeSheet').onclick = () => $('#mask').classList.remove('on');
+  $('#aGo').onclick = async () => {
+    const title = $('#aTitle').value.trim(), body = $('#aBody').value.trim(), msg = $('#aMsg');
+    if(!title){ msg.className='msg err'; msg.textContent='标题不能为空'; return; }
+    const btn = $('#aGo'); btn.disabled = true; msg.className='msg'; msg.textContent='派活中…';
+    try{
+      const r = await fetch('/api/assign', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({title, body, assignee: target})});
+      const j = await r.json();
+      msg.className = 'msg ' + (j.ok ? 'ok' : 'err');
+      msg.textContent = (j.ok ? '✅ ' : '❌ ') + (j.message || '');
+      if(j.ok){ $('#aTitle').value=''; $('#aBody').value=''; setTimeout(()=>load(), 800); }
+    }catch(e){ msg.className='msg err'; msg.textContent='请求失败：'+e; }
+    btn.disabled = false;
+  };
+  $('#aCopy').onclick = () => {
+    const t = $('#aTitle').value.trim() || '<任务标题>';
+    const cmd = `hermes kanban create "${t}" --assignee ${target}`;
+    navigator.clipboard?.writeText(cmd);
+    $('#aMsg').className='msg ok'; $('#aMsg').textContent = '已复制：' + cmd;
+  };
+}
+
+function openBanner(){
+  const o = (DATA && DATA.office) || {};
+  $('#sheet').innerHTML = `
+    <div class="sh">
+      <div class="av" style="background-image:url('/avatars_256/default.jpg')"></div>
+      <div class="who"><b>自定义顶部横幅</b>
+        <div>公司名 / slogan 会存进 <code>agents.json</code> 的 <code>OFFICE</code> 段，重开也在</div></div>
+      <span class="x" id="closeSheet">✕</span>
+    </div>
+    <div class="sb">
+      <div class="blabel">公司名（显示在最左边，可带 emoji）</div>
+      <input class="bfield" id="bTitle" maxlength="60" value="${esc(o.title||'Hermes 办公室')}">
+      <div class="blabel">Slogan / 一句话（显示在公司名右边，可留空）</div>
+      <input class="bfield" id="bSlogan" maxlength="120" value="${esc(o.slogan||'')}">
+      <div class="row" style="display:flex;gap:8px;align-items:center">
+        <button id="bSave" style="font:inherit;font-size:12.5px;font-weight:650;cursor:pointer;color:#2b1c10;background:linear-gradient(180deg,#ffe1a4,#f0c063);border:none;border-radius:8px;padding:8px 14px">保存</button>
+        <button class="ghost" id="bReset" style="font:inherit;font-size:12.5px;cursor:pointer;color:var(--fg);background:#2d2539;border:1px solid var(--line);border-radius:8px;padding:8px 14px">恢复默认</button>
+        <span id="bMsg" style="font-size:11.5px;color:var(--muted)"></span>
+      </div>
+      <div class="blabel" style="margin-top:12px">也可以直接改文件：<code>agents.json</code> → <code>"OFFICE": {"title": "...", "slogan": "..."}</code>，刷新即生效。</div>
+    </div>`;
+  $('#mask').classList.add('on');
+  $('#closeSheet').onclick = () => $('#mask').classList.remove('on');
+  $('#bReset').onclick = () => { $('#bTitle').value = 'Hermes 办公室'; $('#bSlogan').value = '我派活 → 经理分派 → 员工执行'; };
+  $('#bSave').onclick = async () => {
+    const msg = $('#bMsg'); msg.textContent = '保存中…';
+    try{
+      const r = await fetch('/api/banner', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({title: $('#bTitle').value, slogan: $('#bSlogan').value})});
+      const j = await r.json();
+      msg.style.color = j.ok ? '#9ff0c4' : '#ffb3b0';
+      msg.textContent = (j.ok ? '✅ ' : '❌ ') + (j.message || '');
+      if(j.ok){ load(); setTimeout(()=>$('#mask').classList.remove('on'), 700); }
+    }catch(e){ msg.style.color = '#ffb3b0'; msg.textContent = '请求失败：' + e; }
+  };
+}
+
+function render(){
+  const t = DATA.totals;
+  const o = DATA.office || {};
+  $('#officeTitle').textContent = o.title || 'Hermes 办公室';
+  $('#officeSlogan').textContent = o.slogan || '';
+  $('#win').textContent = '统计窗口：' + DATA.window;
+  $('#live').textContent = '● 已连接 · ' + new Date().toLocaleTimeString('zh-CN',{hour12:false});
+  $('#live').className = 'badge on';
+  const b = $('#busy');
+  b.textContent = t.running ? `正在执行 ${t.running} 个项目` : '当前无人干活';
+  b.className = 'badge' + (t.running ? ' on' : '');
+
+  const boss = DATA.agents.find(a => a.seat === 'boss');
+  const mgr  = DATA.agents.find(a => a.seat === 'manager');
+  $('#suite').innerHTML = deskHTML(boss, {seat:'boss'}) + deskHTML(mgr, {seat:'manager'});
+
+  const staff = DATA.agents.filter(a => a.seat === 'staff');
+  $('#zonecount').textContent = `${staff.filter(a=>a.exists).length} 人在编 / ${staff.length} 个工位`;
+  $('#staff').innerHTML = staff.map(a => deskHTML(a)).join('')
+    || '<div class="empty">还没有员工：<code>hermes profile create coder</code></div>';
+  // 正在输入时不要重绘右侧（否则 5 秒刷新会打断你打字）
+  const typing = document.activeElement && document.activeElement.id === 'chatInput';
+  if(!typing) renderPane();
+}
+
+async function load(){
+  try{
+    const r = await fetch('/api/office', {cache:'no-store'});
+    DATA = await r.json();
+    render();
+  }catch(e){
+    $('#live').textContent = '● 连接断开，重试中…';
+    $('#live').className = 'badge';
+  }
+}
+
+document.addEventListener('click', e => {
+  const d = e.target.closest('.desk');
+  if(d){
+    const a = DATA.agents.find(x => x.seat === d.dataset.seat && d.dataset.seat)
+           || DATA.agents.find(x => x.name === d.dataset.id);
+    if(a) openSheet(a);
+  }
+});
+document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('on', x === b));
+  TAB = b.dataset.tab; renderPane();
+});
+$('#mask').addEventListener('click', e => { if(e.target.id === 'mask') $('#mask').classList.remove('on'); });
+document.addEventListener('keydown', e => { if(e.key === 'Escape') $('#mask').classList.remove('on'); });
+$('#editBanner').onclick = () => openBanner();
+
+load();
+setInterval(load, 5000);
+</script>
+</body>
+</html>

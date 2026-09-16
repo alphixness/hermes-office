@@ -20,17 +20,35 @@ import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, Response
 
 try:
     from hermes_cli import kanban_db  # gateway 自带；拿它定位数据目录最稳
 except Exception:  # pragma: no cover - 极端情况下退回环境变量
     kanban_db = None
 
-router = APIRouter()
+CORS_HEADERS = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Headers": "*, X-Hermes-Session-Token, Authorization, Content-Type",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Max-Age": "600",
+}
+
+
+def _cors(response: Response) -> None:
+    """面板用 srcDoc 渲染原页面 → 那是个不透明源，所有请求都算跨源，必须放行。
+
+    放行不等于放宽鉴权：这些路由仍然要求会话 token（ctx.rest 和注入的 shim 都会带上）。
+    """
+    for k, v in CORS_HEADERS.items():
+        response.headers[k] = v
+
+
+router = APIRouter(dependencies=[Depends(_cors)])
 HERE = Path(__file__).resolve().parent          # <plugin>/dashboard
 PLUGIN_DIR = HERE.parent                        # <plugin>
 ROSTER_FILE = PLUGIN_DIR / "agents.json"
+CHAT_FILE = PLUGIN_DIR / "chat.json"            # 老板的留言（插件自己记，和 kanban 的 feed 合并展示）
 AVATAR_DIR = PLUGIN_DIR / "avatars_256"
 
 FEED_LIMIT = 60
@@ -118,6 +136,100 @@ def profile_homes() -> dict[str, Path]:
             if d.is_dir() and (d / "state.db").exists():
                 out[d.name] = d
     return out
+
+
+# ------------------------------------------------------- 老板留言（chat.json）
+
+def load_chat() -> list[dict]:
+    if not CHAT_FILE.exists():
+        return []
+    try:
+        data = json.loads(CHAT_FILE.read_text(encoding="utf-8"))
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def append_chat(text: str, assignee: str, assignee_name: str,
+                task_id: str | None = None, ok: bool = True) -> dict:
+    rec = {"at": datetime.now().isoformat(timespec="seconds"), "author": "boss",
+           "text": text, "assignee": assignee, "assignee_name": assignee_name,
+           "task_id": task_id, "ok": ok}
+    log = load_chat()
+    log.append(rec)
+    try:
+        CHAT_FILE.write_text(json.dumps(log[-500:], ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+    return rec
+
+
+def chat_targets() -> list[tuple[str, str]]:
+    """@ 可选对象：[(显示名, profile)]，含花名册名字、id 与真实 profile"""
+    roster, _ = load_roster()
+    pairs: list[tuple[str, str]] = []
+    for rid, r in roster.items():
+        if r.get("human"):
+            continue
+        prof = r.get("bind_profile") or rid
+        pairs.append((r.get("name") or rid, prof))
+        pairs.append((rid, prof))
+    for name in profile_homes():
+        pairs.append((name, name))
+    seen, out = set(), []
+    for disp, prof in pairs:
+        if disp and disp not in seen:
+            seen.add(disp)
+            out.append((disp, prof))
+    return out
+
+
+def manager_profile() -> str:
+    roster, _ = load_roster()
+    for rid, r in roster.items():
+        if r.get("seat") == "manager":
+            return r.get("bind_profile") or rid
+    return "default"
+
+
+def resolve_mention(text: str) -> tuple[str | None, str | None]:
+    """@某人 → (profile, 显示名)；取最长匹配，避免 @林 命中 @林诀"""
+    best = None
+    for disp, prof in chat_targets():
+        if f"@{disp}" in text and (best is None or len(disp) > len(best[1])):
+            best = (prof, disp)
+    return best if best else (None, None)
+
+
+def strip_mention(text: str, disp: str | None) -> str:
+    if not disp:
+        return text
+    out = text.replace(f"@{disp}", " ")
+    for ch in ("，", "。", ",", ".", "：", ":", "、", "!", "！"):
+        out = out.replace(f"@ {ch}", ch)
+    return " ".join(out.split()).strip(" -—·:：,，")
+
+
+def assign_task(title: str, assignee: str, body: str = "") -> tuple[bool, str]:
+    """派活：调官方 CLI（不直接写库），和独立窗口版同一路径"""
+    import shutil
+    import subprocess
+    title, assignee, body = (title or "").strip(), (assignee or "").strip(), (body or "").strip()
+    if not title or not assignee:
+        return False, "标题和负责人不能为空"
+    if len(title) > 200 or len(body) > 2000:
+        return False, "内容过长（标题 ≤200 字，说明 ≤2000 字）"
+    exe = shutil.which("hermes") or "hermes"
+    cmd = [exe, "kanban", "create", title, "--assignee", assignee] + (["--body", body] if body else [])
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=90,
+                           encoding="utf-8", errors="replace")
+    except Exception as e:
+        return False, f"{type(e).__name__}: {e}"
+    out = ((r.stdout or "") + (r.stderr or "")).strip()
+    if r.returncode != 0:
+        return False, out[:400] or f"退出码 {r.returncode}"
+    return True, out[:400] or "已派活"
 
 
 # --------------------------------------------------------------------- 看板
@@ -288,6 +400,18 @@ def build(days: int = 8) -> dict:
         "cost_usd": round(sum(a["tokens"]["cost_usd"] for a in agents), 4),
         "working": sum(1 for a in agents if a["state"] == "working"),
     })
+
+    # 聊天室时间线 = 老板留言（chat.json）+ 员工动态（kanban），按时间合并
+    boss_name = next((r.get("name") for r in roster.values() if r.get("human")), "老板")
+    feed = list(extra.get("feed", []))
+    for m in load_chat():
+        feed.append({"kind": "", "who": "boss", "author": "boss", "name": boss_name,
+                     "text": m.get("text") or "", "at": m.get("at"),
+                     "assignee": m.get("assignee"), "assignee_name": m.get("assignee_name"),
+                     "task_id": m.get("task_id"), "ok": m.get("ok", True)})
+    feed.sort(key=lambda x: x.get("at") or "")
+    feed = feed[-FEED_LIMIT:]
+
     return {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "hermes_home": str(hermes_home()),
@@ -295,11 +419,19 @@ def build(days: int = 8) -> dict:
         "office": office_cfg,
         "totals": totals,
         "agents": agents,
-        "feed": extra.get("feed", []),
+        "feed": feed,
+        "targets": [{"name": d, "profile": p} for d, p in chat_targets()],
+        "default_assignee": manager_profile(),
     }
 
 
 # ------------------------------------------------------------------------- 路由
+
+@router.options("/{rest:path}")
+def preflight(rest: str) -> Response:
+    """srcdoc 里的预检（自定义 header 触发）。"""
+    return Response(status_code=204, headers=CORS_HEADERS)
+
 
 @router.get("/office")
 def get_office(days: int = 8) -> dict:
@@ -324,3 +456,122 @@ def avatars() -> dict:
             except Exception:
                 continue
     return out
+
+
+def save_office_cfg(title: str, slogan: str) -> tuple[bool, str]:
+    """改顶部横幅：写回插件目录的 agents.json（和独立窗口版同一个字段）"""
+    try:
+        cfg = json.loads(ROSTER_FILE.read_text(encoding="utf-8")) if ROSTER_FILE.exists() else {"agents": []}
+        cfg["OFFICE"] = {"title": (title or "").strip()[:60] or "Hermes 办公室",
+                         "slogan": (slogan or "").strip()[:120]}
+        ROSTER_FILE.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+        return True, "已保存"
+    except Exception as e:
+        return False, f"{type(e).__name__}: {e}"
+
+
+@router.post("/chat")
+def post_chat(payload: dict) -> dict:
+    """老板在面板里留言/派活：@某人 → 派给他；不 @ → 派给经理。走官方 CLI，不直接写库。"""
+    text = str((payload or {}).get("text") or "").strip()
+    if not text:
+        return {"ok": False, "message": "内容不能为空"}
+    text = text[:600]
+    prof, disp = resolve_mention(text)
+    if not prof:
+        prof = manager_profile()
+        disp = next((d for d, p in chat_targets() if p == prof), prof)
+    title = strip_mention(text, disp)[:200] or text[:200]
+    ok, out = assign_task(title, prof, body=f"来自桌面端办公室面板（老板留言：{text}）")
+    task_id = None
+    for tok in (out or "").replace("\n", " ").split():
+        if tok.startswith("t_"):
+            task_id = tok.strip(".,;)")
+            break
+    append_chat(text, prof, disp, task_id, ok)
+    return {"ok": ok, "message": out, "assignee": prof, "assignee_name": disp, "task_id": task_id}
+
+
+@router.post("/banner")
+def post_banner(payload: dict) -> dict:
+    ok, msg = save_office_cfg(str((payload or {}).get("title") or ""),
+                              str((payload or {}).get("slogan") or ""))
+    return {"ok": ok, "message": msg}
+
+
+@router.post("/assign")
+def post_assign(payload: dict) -> dict:
+    """独立窗口版页面的派活契约（title/body/assignee），让原页面一字不改也能用。"""
+    p = payload or {}
+    ok, out = assign_task(str(p.get("title") or ""), str(p.get("assignee") or manager_profile()),
+                          str(p.get("body") or ""))
+    return {"ok": ok, "message": out}
+
+
+# --------------------------------------------------------------- UI（原页面直出）
+
+UI_FILE = PLUGIN_DIR / "ui" / "index.html"
+
+
+def session_token() -> str:
+    """桌面端会话 token（后端进程自己就能拿到），注入给 srcdoc 里的页面用。"""
+    t = os.environ.get("HERMES_DASHBOARD_SESSION_TOKEN")
+    if t:
+        return t
+    try:
+        from hermes_cli import web_server as ws
+        return getattr(ws, "_SESSION_TOKEN", "") or ""
+    except Exception:
+        return ""
+
+
+def _ui_shim() -> str:
+    """注入到原页面最前面的一小段 shim：
+      1) 把 /api/xxx 改写到本插件命名空间，并带上会话 token（srcdoc 是不透明源，带不了 header 就 401）
+      2) 把 agent.avatar（/avatars_256/x.jpg）换成内嵌 data URI —— srcdoc 里的 <img> 同样带不了 token
+    """
+    tok = json.dumps(session_token())
+    return (
+        "<script>(function(){"
+        "var TOKEN=" + tok + ";"
+        "var BASE='/api/plugins/hermes-office';"
+        "var of=window.fetch.bind(window);"
+        "var AV=of(BASE+'/avatars',{headers:{'X-Hermes-Session-Token':TOKEN}})"
+        ".then(function(r){return r.json()}).catch(function(){return {}});"
+        "window.fetch=function(u,o){"
+        "  var url=u;"
+        "  if(typeof u==='string'&&u.indexOf('/api/')===0){url=BASE+u.slice(4);}"
+        "  var opt=Object.assign({},o||{});"
+        "  var h=Object.assign({},(o&&o.headers)||{});"
+        "  h['X-Hermes-Session-Token']=TOKEN;"
+        "  opt.headers=h;"
+        "  return of(url,opt).then(function(r){"
+        "    if(String(url).indexOf('/office')<0){return r;}"
+        "    return r.clone().json().then(function(d){"
+        "      return AV.then(function(av){"
+        "        (d.agents||[]).forEach(function(a){"
+        "          if(a&&a.avatar){var k=String(a.avatar).split('/').pop().replace(/\\.[a-z]+$/i,'');"
+        "            if(av[k]){a.avatar=av[k];}}"
+        "        });"
+        "        return new Response(JSON.stringify(d),{status:r.status,headers:{'Content-Type':'application/json'}});"
+        "      });"
+        "    });"
+        "  });"
+        "};"
+        "})();</script>"
+    )
+
+
+@router.get("/ui")
+def ui() -> dict:
+    """把独立窗口版那一页原样交给桌面端面板（面板用 srcDoc 渲染，视觉 100% 一致）。"""
+    try:
+        html = UI_FILE.read_text(encoding="utf-8")
+    except Exception as e:
+        return {"ok": False, "html": "", "message": f"读不到 ui/index.html：{type(e).__name__}: {e}"}
+    # 插到 <head> 之后、页面脚本之前
+    marker = "<head>"
+    idx = html.lower().find(marker)
+    shim = _ui_shim()
+    html = (html[:idx + len(marker)] + shim + html[idx + len(marker):]) if idx >= 0 else (shim + html)
+    return {"ok": True, "html": html}
