@@ -1,0 +1,105 @@
+{
+  "_说明": "员工花名册：改这里的 name/role/gender 就能给员工改名换岗；改 prompt 可调该头像风格。id 必须与 Hermes 的 profile 名一致（manager 例外，它对应 default 之外的『经理』工位，绑定哪个 profile 见 bind_profile）。",
+  "_生成头像": "python make_avatars.py           # 只补缺失的\npython make_avatars.py --force   # 全部重出\npython make_avatars.py --only coder",
+  "_风格": "所有头像共用 STYLE，保证整体风格统一（唯美卡通/半写实插画）",
+  "STYLE": "beautiful cartoon illustration portrait, semi-realistic anime style, soft rim lighting, clean pastel gradient background, upper body, centered, friendly confident expression, crisp line art, no text, no letters, no watermark, no logo, no border",
+  "agents": [
+    {
+      "id": "manager",
+      "name": "苏晚",
+      "role": "经理 · 你的主 Agent",
+      "gender": "female",
+      "prompt": "elegant young woman as an office manager, navy blazer over cream blouse, long dark wavy hair, gentle confident smile, holding a clipboard",
+      "bind_profile": "default",
+      "seat": "manager",
+      "avatar": "manager"
+    },
+    {
+      "id": "architect",
+      "name": "陆行舟",
+      "role": "架构师",
+      "gender": "male",
+      "prompt": "calm young man as a software architect, dark turtleneck sweater, short black hair, glasses, thoughtful expression, holding rolled blueprints",
+      "bind_profile": "architect",
+      "seat": "staff"
+    },
+    {
+      "id": "coder",
+      "name": "林诀",
+      "role": "开发",
+      "gender": "male",
+      "prompt": "cheerful young male programmer, gray hoodie, messy short hair, headphones around neck, energetic smile, laptop under one arm",
+      "bind_profile": "coder",
+      "seat": "staff"
+    },
+    {
+      "id": "designer",
+      "name": "沈稚",
+      "role": "设计师",
+      "gender": "female",
+      "prompt": "stylish young woman designer, oversized beige sweater, pink hair bun, holding a digital stylus, creative vibe",
+      "bind_profile": "designer",
+      "seat": "staff"
+    },
+    {
+      "id": "tester",
+      "name": "唐糖",
+      "role": "测试",
+      "gender": "female",
+      "prompt": "bright young woman QA engineer, mint green shirt, short bob hair, magnifying glass in hand, playful focused look",
+      "bind_profile": "tester",
+      "seat": "staff"
+    },
+    {
+      "id": "reviewer",
+      "name": "江澈",
+      "role": "评审",
+      "gender": "male",
+      "prompt": "sharp-eyed young man code reviewer, white dress shirt with rolled sleeves, neat black hair, arms crossed, faint knowing smile",
+      "bind_profile": "reviewer",
+      "seat": "staff"
+    },
+    {
+      "id": "devops",
+      "name": "祁野",
+      "role": "运维",
+      "gender": "male",
+      "prompt": "reliable young man site reliability engineer, dark green work jacket, short hair, calm expression, holding a small server tool box",
+      "bind_profile": "devops",
+      "seat": "staff"
+    },
+    {
+      "id": "doc",
+      "name": "白露",
+      "role": "文档",
+      "gender": "female",
+      "prompt": "gentle young woman technical writer, white knit cardigan, long straight hair with hairpin, holding a notebook, soft smile",
+      "bind_profile": "doc",
+      "seat": "staff"
+    },
+    {
+      "id": "content-writer",
+      "name": "温言",
+      "role": "内容运营",
+      "gender": "female",
+      "prompt": "warm young woman content writer, camel colored coat, wavy shoulder-length hair, holding a coffee cup, bright friendly smile",
+      "bind_profile": "content-writer",
+      "seat": "staff"
+    },
+    {
+      "id": "boss",
+      "name": "老板",
+      "role": "创始人（你）",
+      "gender": "male",
+      "prompt": "confident young man as company founder, dark casual blazer, short neat hair, relaxed smile, standing with hands in pockets",
+      "bind_profile": "boss",
+      "seat": "boss",
+      "human": true,
+      "avatar": "default"
+    }
+  ],
+  "OFFICE": {
+    "title": "🏢 Hermes 虚拟办公室",
+    "slogan": "我派活 → 经理分派 → 员工执行"
+  }
+}

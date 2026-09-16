@@ -1,0 +1,10 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+# 运行时产物
+office.log
+chat.json.bak
+# 本地调试截图
+office_shot.png
+office_live.png
