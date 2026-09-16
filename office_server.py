@@ -135,8 +135,9 @@ STATUS_BUCKET = {
 def collect_kanban() -> dict:
     con = ro_connect(HERMES_HOME / 'kanban.db')
     tc = cols_of(con, 'tasks')
-    empty = {'agents': {}, 'totals': {'running': 0, 'done': 0, 'blocked': 0,
-                                      'queued': 0, 'other': 0, 'total': 0}}
+    # 桶集合一律从 STATUS_BUCKET 推导，别手写：漏一个桶 = 一次 KeyError = 整个接口 500
+    buckets = sorted(set(STATUS_BUCKET.values()) | {'other'})
+    empty = {'agents': {}, 'totals': dict({b: 0 for b in buckets}, total=0)}
     if not tc:
         return empty
     idc, titlec = has(tc, 'id') or 'id', has(tc, 'title') or 'title'
@@ -172,7 +173,7 @@ def collect_kanban() -> dict:
 
         a = agents.setdefault(name, {
             'name': name, 'state': 'idle', 'current': None,
-            'counts': {'running': 0, 'done': 0, 'blocked': 0, 'queued': 0, 'other': 0},
+            'counts': {b: 0 for b in buckets},
             'comments': 0, 'events': 0, 'runs': 0, 'tasks': [],
         })
         a['counts'][bucket] += 1
@@ -568,11 +569,11 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
-    def _send(self, code, body: bytes, ctype: str):
+    def _send(self, code, body: bytes, ctype: str, cache: str = 'no-store'):
         self.send_response(code)
         self.send_header('Content-Type', ctype)
         self.send_header('Content-Length', str(len(body)))
-        self.send_header('Cache-Control', 'no-store')
+        self.send_header('Cache-Control', cache)
         # 只给 GET 放 CORS：桌面端插件/网页看板要读数据。POST（派活）不开 CORS，
         # 免得随便一个网页就能往你的看板派任务。
         if self.command == 'GET':
@@ -675,7 +676,9 @@ class Handler(BaseHTTPRequestHandler):
         if not ctype:
             self._send(403, b'forbidden', 'text/plain; charset=utf-8')
             return
-        self._send(200, target.read_bytes(), ctype)
+        # 图片让浏览器缓存一天：每次切进面板都要重载 10 张头像，别每次都走网络
+        self._send(200, target.read_bytes(), ctype,
+                   'public, max-age=86400' if ext != '.json' else 'no-store')
 
 
 def main() -> int:
