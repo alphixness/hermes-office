@@ -1,0 +1,4 @@
+name: hermes-office
+version: 1.0.0
+description: "可视化办公室：只读读取 kanban.db 与各 profile 的 state.db，画成工位/聊天室/Token 排行。桌面端原生面板（desktop/plugin.js）+ 插件后端（dashboard/plugin_api.py），不依赖任何额外端口。"
+author: alphixness

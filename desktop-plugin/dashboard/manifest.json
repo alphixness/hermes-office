@@ -1,0 +1,8 @@
+{
+  "name": "hermes-office",
+  "label": "Hermes 办公室",
+  "description": "把本地 Hermes 的多 Agent 协作画成一间看得见的办公室：老板/经理办公室、开放工位、聊天室、Token 排行。只读展示层，数据来自 kanban.db 与各 profile 的 state.db。",
+  "icon": "Organization",
+  "version": "1.0.0",
+  "api": "plugin_api.py"
+}
