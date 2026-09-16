@@ -18,9 +18,22 @@ xcopy /E /I desktop-plugin "%LOCALAPPDATA%\hermes\plugins\hermes-office"
 #    macOS / Linux
 cp -r desktop-plugin ~/.hermes/plugins/hermes-office
 
-# 2) 启用（用户插件默认 opt-in，必须在 plugins.enabled 里）
-hermes plugins enable hermes-office
+# 2) 启用（两步，缺一不可）
+hermes plugins enable hermes-office        # ① agent 半边：写进 config.yaml 的 plugins.enabled
+# ② 桌面半边：打开应用 → Settings → Plugins → 把「Hermes 办公室」开关打开（即时生效，不用重启）
+```
 
+> ⚠️ **为什么要有第 ② 步**：统一包的**桌面半边是 opt-in**。Electron 把
+> `plugins/<id>/desktop/` 拷到 `desktop-plugins/<id>/` 时会写一个 `.hermes-package.json` 标记，
+> 加载器看到标记就把 `defaultEnabled` 当成 `false`（和它的 Python 半边一样的姿态）。
+> 用户的开关存在 renderer 的 `localStorage['hermes.desktop.pluginDecisions.v2']`，
+> **缺 key = 没选过 = 用默认值（关）**。所以只跑 `hermes plugins enable` 面板不会出现 ——
+> 这不是 bug，是设计。
+>
+> 而单文件磁盘插件（`desktop-plugins/<id>/plugin.js`，没有标记）会**立刻加载** ——
+> 这就是为什么早期那版单文件原型一放就出来，而统一包看着像"没生效"。
+
+```bash
 # 3) 自检
 hermes plugins doctor hermes-office      # 期望：OK: runtime discovery, manifest parsing, import, and registration passed
 ```
