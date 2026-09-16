@@ -511,6 +511,47 @@ def post_assign(payload: dict) -> dict:
 # --------------------------------------------------------------- UI（原页面直出）
 
 UI_FILE = PLUGIN_DIR / "ui" / "index.html"
+_UI_URL: str | None = None
+
+
+def start_ui_server() -> str | None:
+    """在插件自己的 ui/ 目录里起一个只监听 127.0.0.1 的极小服务。
+
+    这套 server.py 就是独立窗口版用的那份（同一份页面 + 同一份数据契约），
+    面板用 iframe 直连它：同源、无鉴权/CORS 烦恼、视觉与独立窗口 100% 一致，
+    而且**不需要用户另外跑任何东西**（插件后端起它，进程随 gateway 一起活）。
+    端口随机：每次后端重启都换一个，/ui-url 会返回当前的。
+    """
+    global _UI_URL
+    if _UI_URL:
+        return _UI_URL
+    try:
+        import importlib.util
+        import socket
+        import threading
+        from http.server import ThreadingHTTPServer
+
+        srv_py = PLUGIN_DIR / "ui" / "server.py"
+        if not srv_py.exists():
+            return None
+        spec = importlib.util.spec_from_file_location("hermes_office_ui_server", str(srv_py))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)          # type: ignore[union-attr]
+        mod.HERMES_HOME = mod.default_hermes_home()
+        mod.WINDOW_DAYS = 7
+
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+        s.close()
+
+        httpd = ThreadingHTTPServer(("127.0.0.1", port), mod.Handler)
+        threading.Thread(target=httpd.serve_forever, daemon=True,
+                         name="hermes-office-ui").start()
+        _UI_URL = f"http://127.0.0.1:{port}/"
+    except Exception:
+        _UI_URL = None
+    return _UI_URL
 
 
 def session_token() -> str:
@@ -560,6 +601,15 @@ def _ui_shim() -> str:
         "};"
         "})();</script>"
     )
+
+
+@router.get("/ui-url")
+def ui_url() -> dict:
+    """面板首选的渲染路径：返回插件自带 UI 服务的地址，面板 iframe 直连。"""
+    url = start_ui_server()
+    if url:
+        return {"ok": True, "url": url}
+    return {"ok": False, "url": "", "message": "ui/server.py 没起来（看 gateway 日志）"}
 
 
 @router.get("/ui")

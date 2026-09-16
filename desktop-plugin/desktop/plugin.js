@@ -50,19 +50,18 @@ function shortT(t) { return t ? String(t).replace('T', ' ').slice(5, 16) : '—'
 
 /* ------------------------------------------------------- 原页面（首选渲染路径） */
 
-function useUiPage() {
-  const [html, setHtml] = useState('')
+function useUiUrl() {
+  const [url, setUrl] = useState('')
   const [err, setErr] = useState(null)
-  const [tick, setTick] = useState(0)
   const alive = useRef(true)
 
   const load = useCallback(async () => {
     if (!CTX || !CTX.rest) { setErr('ctx.rest 不可用'); return }
     try {
-      const r = await CTX.rest('/ui')
+      const r = await CTX.rest('/ui-url')
       if (!alive.current) return
-      if (r && r.ok && r.html) { setHtml(r.html); setErr(null) }
-      else setErr((r && r.message) || '后端没返回页面')
+      if (r && r.ok && r.url) { setUrl(r.url); setErr(null) }
+      else setErr((r && r.message) || 'UI 服务没起来')
     } catch (e) {
       if (alive.current) setErr(String((e && e.message) || e))
     }
@@ -74,7 +73,7 @@ function useUiPage() {
     return () => { alive.current = false }
   }, [load])
 
-  return { html, err, reload: () => setTick(t => t + 1), tick }
+  return { url, err, reload: load }
 }
 
 /* ------------------------------------------------- 兜底：原生场景（后端不可用时） */
@@ -275,25 +274,24 @@ function NativeFallback({ message, onRetry }) {
 /* ------------------------------------------------------------------ 主面板 */
 
 function OfficePanel() {
-  const { html, err, reload, tick } = useUiPage()
+  const { url, err, reload } = useUiUrl()
 
-  // 首选：原页面（与独立窗口版 100% 一致）
-  if (html && !err) {
+  // 首选：插件自带的 UI 服务（就是独立窗口那一页本身，视觉 100% 一致）
+  if (url) {
     return jsx('div', {
       style: { display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 },
       children: jsx('iframe', {
-        key: tick,
         title: 'Hermes 办公室',
-        srcDoc: html,
+        src: url,
         style: { flex: 1, minHeight: 0, width: '100%', border: 'none', background: 'transparent', display: 'block' },
       }),
     })
   }
 
-  if (!html && !err) {
+  if (!err) {
     return jsx('div', {
       style: { display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: ART.muted, background: '#1a1622' },
-      children: '正在载入办公室…',
+      children: '正在启动办公室…',
     })
   }
 
