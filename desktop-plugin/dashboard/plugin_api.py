@@ -549,7 +549,15 @@ def start_ui_server() -> str | None:
         threading.Thread(target=httpd.serve_forever, daemon=True,
                          name="hermes-office-ui").start()
         _UI_URL = f"http://127.0.0.1:{port}/"
-    except Exception:
+        try:
+            (PLUGIN_DIR / "ui_url.txt").write_text(_UI_URL, encoding="utf-8")
+        except Exception:
+            pass
+    except Exception as e:
+        try:
+            (PLUGIN_DIR / "ui_url.txt").write_text(f"FAILED {type(e).__name__}: {e}", encoding="utf-8")
+        except Exception:
+            pass
         _UI_URL = None
     return _UI_URL
 
@@ -610,6 +618,13 @@ def ui_url() -> dict:
     if url:
         return {"ok": True, "url": url}
     return {"ok": False, "url": "", "message": "ui/server.py 没起来（看 gateway 日志）"}
+
+
+# 插件模块一被 gateway 导入就把 UI 服务拉起来，不等面板来问
+try:
+    start_ui_server()
+except Exception:
+    pass
 
 
 @router.get("/ui")
