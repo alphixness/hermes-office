@@ -512,6 +512,8 @@ def post_assign(payload: dict) -> dict:
 
 UI_FILE = PLUGIN_DIR / "ui" / "index.html"
 _UI_URL: str | None = None
+# 面板会按这个顺序自探端口（见 desktop/plugin.js 的 PORT_CANDIDATES）
+UI_PORT_CANDIDATES = (8142, 8143, 8144, 8150)
 
 
 def start_ui_server() -> str | None:
@@ -540,12 +542,22 @@ def start_ui_server() -> str | None:
         mod.HERMES_HOME = mod.default_hermes_home()
         mod.WINDOW_DAYS = 7
 
-        s = socket.socket()
-        s.bind(("127.0.0.1", 0))
-        port = s.getsockname()[1]
-        s.close()
+        from http.server import ThreadingHTTPServer
 
-        httpd = ThreadingHTTPServer(("127.0.0.1", port), mod.Handler)
+        httpd = None
+        port = 0
+        # 先试固定端口：面板不用问后端就能直接找到（ctx.rest 在 headless 配置下是 404）
+        for cand in UI_PORT_CANDIDATES:
+            try:
+                httpd = ThreadingHTTPServer(("127.0.0.1", cand), mod.Handler)
+                port = cand
+                break
+            except OSError:
+                continue
+        if httpd is None:                      # 全被占了就退回随机端口
+            httpd = ThreadingHTTPServer(("127.0.0.1", 0), mod.Handler)
+            port = httpd.server_address[1]
+
         threading.Thread(target=httpd.serve_forever, daemon=True,
                          name="hermes-office-ui").start()
         _UI_URL = f"http://127.0.0.1:{port}/"

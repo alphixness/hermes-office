@@ -50,21 +50,42 @@ function shortT(t) { return t ? String(t).replace('T', ' ').slice(5, 16) : '—'
 
 /* ------------------------------------------------------- 原页面（首选渲染路径） */
 
+// 固定端口候选 —— 面板直接探这些端口，完全不依赖 ctx.rest
+// （桌面端的 ctx.rest 打到 headless `hermes serve`，它按设计拒绝所有 web UI/插件 API 路径 → 404）
+const PORT_CANDIDATES = [8142, 8143, 8144, 8150]
+
+async function probeUiUrl() {
+  // 1) 先问后端：某些配置下 ctx.rest 是通的（比如插件 API 挂在 dashboard 后端上时）
+  try {
+    if (CTX && CTX.rest) {
+      const r = await CTX.rest('/ui-url')
+      if (r && r.ok && r.url) return r.url
+    }
+  } catch (e) { /* headless 后端必然 404，属正常 */ }
+  // 2) 固定端口自探：no-cors fetch 只关心"有没有 HTTP 响应"，不关心内容/CORS
+  for (let i = 0; i < PORT_CANDIDATES.length; i++) {
+    const base = 'http://127.0.0.1:' + PORT_CANDIDATES[i] + '/'
+    try {
+      await fetch(base + 'health', { mode: 'no-cors', cache: 'no-store' })
+      return base
+    } catch (e) { /* 换下一个端口 */ }
+  }
+  return ''
+}
+
 function useUiUrl() {
   const [url, setUrl] = useState('')
   const [err, setErr] = useState(null)
+  const [busy, setBusy] = useState(true)
   const alive = useRef(true)
 
   const load = useCallback(async () => {
-    if (!CTX || !CTX.rest) { setErr('ctx.rest 不可用'); return }
-    try {
-      const r = await CTX.rest('/ui-url')
-      if (!alive.current) return
-      if (r && r.ok && r.url) { setUrl(r.url); setErr(null) }
-      else setErr((r && r.message) || 'UI 服务没起来')
-    } catch (e) {
-      if (alive.current) setErr(String((e && e.message) || e))
-    }
+    setBusy(true)
+    const u = await probeUiUrl()
+    if (!alive.current) return
+    setBusy(false)
+    if (u) { setUrl(u); setErr(null) }
+    else { setUrl(''); setErr('本地办公室服务没在监听（端口 ' + PORT_CANDIDATES.join('/') + ' 都没响应）') }
   }, [])
 
   useEffect(() => {
@@ -73,7 +94,7 @@ function useUiUrl() {
     return () => { alive.current = false }
   }, [load])
 
-  return { url, err, reload: load }
+  return { url, err, busy, reload: load }
 }
 
 /* ------------------------------------------------- 兜底：原生场景（后端不可用时） */
@@ -274,7 +295,7 @@ function NativeFallback({ message, onRetry }) {
 /* ------------------------------------------------------------------ 主面板 */
 
 function OfficePanel() {
-  const { url, err, reload } = useUiUrl()
+  const { url, err, busy, reload } = useUiUrl()
 
   // 首选：插件自带的 UI 服务（就是独立窗口那一页本身，视觉 100% 一致）
   if (url) {
@@ -288,7 +309,7 @@ function OfficePanel() {
     })
   }
 
-  if (!err) {
+  if (busy || !err) {
     return jsx('div', {
       style: { display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: ART.muted, background: '#1a1622' },
       children: '正在启动办公室…',
