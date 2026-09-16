@@ -206,5 +206,6 @@ MIT
 
 - [`教程-Hermes可视化办公室.md`](教程-Hermes可视化办公室.md) —— 从零手搓的完整教程（含 11 个实测坑）
 - [`docs/blog-post.md`](docs/blog-post.md) —— 可直接发布的**博文版**（配图 + 故事线 + 仓库地址）
+- [`desktop-plugin/`](desktop-plugin/) —— **桌面插件版**：把办公室搬进 Hermes 桌面端的分栏/整页/侧边栏/状态栏（官方 Desktop Plugin SDK）
 - `dev/` —— 开发期工具：`probe.py` 量布局、`probe_shot.py` 规范截图（不截到别的窗口）
 

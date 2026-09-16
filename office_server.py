@@ -573,6 +573,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Content-Type', ctype)
         self.send_header('Content-Length', str(len(body)))
         self.send_header('Cache-Control', 'no-store')
+        # 只给 GET 放 CORS：桌面端插件/网页看板要读数据。POST（派活）不开 CORS，
+        # 免得随便一个网页就能往你的看板派任务。
+        if self.command == 'GET':
+            self.send_header('Access-Control-Allow-Origin', '*')
         self.end_headers()
         try:
             self.wfile.write(body)
